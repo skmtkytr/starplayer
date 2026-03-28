@@ -95,10 +95,10 @@ fn extract_series_info(filename: &str) -> (Option<String>, Option<i32>) {
         .unwrap_or(filename);
 
     // Pattern: "Name - 01" or "Name - 001"
-    if let Some((name, num_str)) = name_without_ext.rsplit_once(" - ") {
-        if let Ok(num) = num_str.trim().parse::<i32>() {
-            return (Some(name.trim().to_string()), Some(num));
-        }
+    if let Some((name, num_str)) = name_without_ext.rsplit_once(" - ")
+        && let Ok(num) = num_str.trim().parse::<i32>()
+    {
+        return (Some(name.trim().to_string()), Some(num));
     }
 
     // Pattern: S01E02 or EP03 or #04
@@ -112,7 +112,7 @@ fn extract_series_info(filename: &str) -> (Option<String>, Option<i32>) {
         if let Some((pos, num)) = result {
             let series = name_without_ext[..*pos]
                 .trim()
-                .trim_end_matches(|c: char| c == '-' || c == '_' || c == ' ')
+                .trim_end_matches(['-', '_', ' '])
                 .to_string();
             if !series.is_empty() {
                 return (Some(series), Some(*num));
@@ -131,18 +131,17 @@ fn regex_lite_find(s: &str, _pattern: &str) -> Option<(usize, i32)> {
             let rest = &s[i..];
             if rest.len() >= 4 {
                 let first = rest.as_bytes()[0];
-                if first == b'S' || first == b's' {
-                    if let Some(e_pos) = rest[1..].find(|c: char| c == 'E' || c == 'e') {
-                        let season_str = &rest[1..1 + e_pos];
-                        let after_e = &rest[2 + e_pos..];
-                        if season_str.chars().all(|c| c.is_ascii_digit()) && !season_str.is_empty()
+                if (first == b'S' || first == b's')
+                    && let Some(e_pos) = rest[1..].find(['E', 'e'])
+                {
+                    let season_str = &rest[1..1 + e_pos];
+                    let after_e = &rest[2 + e_pos..];
+                    if season_str.chars().all(|c| c.is_ascii_digit()) && !season_str.is_empty() {
+                        let ep_len = after_e.chars().take_while(|c| c.is_ascii_digit()).count();
+                        if ep_len > 0
+                            && let Ok(num) = after_e[..ep_len].parse::<i32>()
                         {
-                            let ep_len = after_e.chars().take_while(|c| c.is_ascii_digit()).count();
-                            if ep_len > 0 {
-                                if let Ok(num) = after_e[..ep_len].parse::<i32>() {
-                                    return Some((i, num));
-                                }
-                            }
+                            return Some((i, num));
                         }
                     }
                 }
@@ -160,10 +159,10 @@ fn regex_lite_find(s: &str, _pattern: &str) -> Option<(usize, i32)> {
                 if (b0 == b'E' || b0 == b'e') && (b1 == b'P' || b1 == b'p') {
                     let after = &rest[2..];
                     let num_len = after.chars().take_while(|c| c.is_ascii_digit()).count();
-                    if num_len > 0 {
-                        if let Ok(num) = after[..num_len].parse::<i32>() {
-                            return Some((i, num));
-                        }
+                    if num_len > 0
+                        && let Ok(num) = after[..num_len].parse::<i32>()
+                    {
+                        return Some((i, num));
                     }
                 }
             }
@@ -176,10 +175,10 @@ fn regex_lite_find(s: &str, _pattern: &str) -> Option<(usize, i32)> {
             if c == '#' {
                 let after = &s[i + 1..];
                 let num_len = after.chars().take_while(|c| c.is_ascii_digit()).count();
-                if num_len > 0 {
-                    if let Ok(num) = after[..num_len].parse::<i32>() {
-                        return Some((i, num));
-                    }
+                if num_len > 0
+                    && let Ok(num) = after[..num_len].parse::<i32>()
+                {
+                    return Some((i, num));
                 }
             }
         }
