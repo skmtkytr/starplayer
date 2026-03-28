@@ -26,6 +26,8 @@ export function WorkspaceDialog({ onSubmit, onClose }: Props) {
             onChange={(e) => setName(e.target.value)}
             placeholder="My Videos"
             autoFocus
+            autoCapitalize="off"
+            autoCorrect="off"
           />
         </div>
         <div className="modal-field">
@@ -34,6 +36,8 @@ export function WorkspaceDialog({ onSubmit, onClose }: Props) {
             value={path}
             onChange={(e) => setPath(e.target.value)}
             placeholder="/path/to/videos or \\server\share"
+            autoCapitalize="off"
+            autoCorrect="off"
           />
         </div>
         <div className="modal-actions">

@@ -18,19 +18,17 @@ export interface MediaFile {
   series_number: number | null;
 }
 
+export interface PlaylistFilter {
+  field: "filename" | "extension" | "path" | "series_name" | "workspace_id";
+  operator: "contains" | "not_contains" | "equals" | "starts_with" | "ends_with";
+  value: string;
+}
+
 export interface Playlist {
   id: string;
   name: string;
-  description: string | null;
-  is_smart: boolean;
   playback_mode: "sequential" | "random" | "repeat";
-  item_count: number;
-}
-
-export interface PlaylistFilter {
-  filter_type: string;
-  operator: string;
-  value: string;
+  filters: PlaylistFilter[];
 }
 
 export interface ScanResult {

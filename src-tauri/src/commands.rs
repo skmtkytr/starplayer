@@ -1,8 +1,6 @@
 use crate::db::Database;
 use crate::models::*;
-use crate::player;
 use crate::scanner;
-use rand::seq::SliceRandom;
 use tauri::State;
 
 type DbState<'a> = State<'a, Database>;
@@ -61,10 +59,20 @@ pub fn get_media_file(db: DbState<'_>, id: String) -> Result<Option<MediaFile>, 
 pub fn create_playlist(
     db: DbState<'_>,
     name: String,
-    description: Option<String>,
-    is_smart: bool,
+    filters: Vec<PlaylistFilter>,
 ) -> Result<Playlist, String> {
-    db.create_playlist(&name, description.as_deref(), is_smart)
+    db.create_playlist(&name, &filters)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_playlist(
+    db: DbState<'_>,
+    id: String,
+    name: String,
+    filters: Vec<PlaylistFilter>,
+) -> Result<(), String> {
+    db.update_playlist(&id, &name, &filters)
         .map_err(|e| e.to_string())
 }
 
@@ -91,79 +99,7 @@ pub fn set_playback_mode(db: DbState<'_>, playlist_id: String, mode: String) -> 
 }
 
 #[tauri::command]
-pub fn add_to_playlist(
-    db: DbState<'_>,
-    playlist_id: String,
-    media_ids: Vec<String>,
-) -> Result<(), String> {
-    db.add_to_playlist(&playlist_id, &media_ids)
+pub fn get_playlist_files(db: DbState<'_>, playlist_id: String) -> Result<Vec<MediaFile>, String> {
+    db.query_playlist_files(&playlist_id)
         .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_playlist_items(db: DbState<'_>, playlist_id: String) -> Result<Vec<MediaFile>, String> {
-    db.get_playlist_items(&playlist_id)
-        .map_err(|e| e.to_string())
-}
-
-// === Filter commands ===
-
-#[tauri::command]
-pub fn add_playlist_filter(
-    db: DbState<'_>,
-    playlist_id: String,
-    filter_type: String,
-    operator: String,
-    value: String,
-) -> Result<(), String> {
-    let filter = PlaylistFilter {
-        filter_type,
-        operator,
-        value,
-    };
-    db.add_playlist_filter(&playlist_id, &filter)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_playlist_filters(
-    db: DbState<'_>,
-    playlist_id: String,
-) -> Result<Vec<PlaylistFilter>, String> {
-    db.get_playlist_filters(&playlist_id)
-        .map_err(|e| e.to_string())
-}
-
-// === Player commands ===
-
-#[tauri::command]
-pub fn play_file(path: String) -> Result<(), String> {
-    player::play_file(&path)
-}
-
-#[tauri::command]
-pub fn play_playlist(db: DbState<'_>, playlist_id: String) -> Result<(), String> {
-    let items = db
-        .get_playlist_items(&playlist_id)
-        .map_err(|e| e.to_string())?;
-
-    if items.is_empty() {
-        return Err("Playlist is empty".to_string());
-    }
-
-    // Check playback mode
-    let playlists = db.list_playlists().map_err(|e| e.to_string())?;
-    let playlist = playlists
-        .iter()
-        .find(|p| p.id == playlist_id)
-        .ok_or("Playlist not found")?;
-
-    let mut paths: Vec<String> = items.iter().map(|f| f.path.clone()).collect();
-
-    if playlist.playback_mode == "random" {
-        let mut rng = rand::rng();
-        paths.shuffle(&mut rng);
-    }
-
-    player::play_files(&paths)
 }

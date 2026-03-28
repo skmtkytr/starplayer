@@ -53,14 +53,17 @@ export async function getMediaFile(id: string): Promise<MediaFile | null> {
 
 export async function createPlaylist(
   name: string,
-  description?: string,
-  isSmart?: boolean
+  filters: PlaylistFilter[]
 ): Promise<Playlist> {
-  return invoke("create_playlist", {
-    name,
-    description: description ?? null,
-    isSmart: isSmart ?? false,
-  });
+  return invoke("create_playlist", { name, filters });
+}
+
+export async function updatePlaylist(
+  id: string,
+  name: string,
+  filters: PlaylistFilter[]
+): Promise<void> {
+  return invoke("update_playlist", { id, name, filters });
 }
 
 export async function listPlaylists(): Promise<Playlist[]> {
@@ -78,47 +81,8 @@ export async function setPlaybackMode(
   return invoke("set_playback_mode", { playlistId, mode });
 }
 
-export async function addToPlaylist(
-  playlistId: string,
-  mediaIds: string[]
-): Promise<void> {
-  return invoke("add_to_playlist", { playlistId, mediaIds });
-}
-
-export async function getPlaylistItems(
+export async function getPlaylistFiles(
   playlistId: string
 ): Promise<MediaFile[]> {
-  return invoke("get_playlist_items", { playlistId });
-}
-
-// === Filter API ===
-
-export async function addPlaylistFilter(
-  playlistId: string,
-  filterType: string,
-  operator: string,
-  value: string
-): Promise<void> {
-  return invoke("add_playlist_filter", {
-    playlistId,
-    filterType,
-    operator,
-    value,
-  });
-}
-
-export async function getPlaylistFilters(
-  playlistId: string
-): Promise<PlaylistFilter[]> {
-  return invoke("get_playlist_filters", { playlistId });
-}
-
-// === Player API ===
-
-export async function playFile(path: string): Promise<void> {
-  return invoke("play_file", { path });
-}
-
-export async function playPlaylist(playlistId: string): Promise<void> {
-  return invoke("play_playlist", { playlistId });
+  return invoke("get_playlist_files", { playlistId });
 }

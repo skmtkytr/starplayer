@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import type { Workspace, MediaFile, Playlist } from "./types";
+import { useState, useEffect, useCallback, useRef } from "react";
+import type { Workspace, MediaFile, Playlist, PlaylistFilter } from "./types";
 import {
   listWorkspaces,
   addWorkspace,
@@ -8,17 +8,30 @@ import {
   listMediaFiles,
   listPlaylists,
   createPlaylist,
+  updatePlaylist,
   deletePlaylist,
-  addToPlaylist,
-  getPlaylistItems,
-  playFile,
-  playPlaylist,
+  getPlaylistFiles,
   setPlaybackMode,
 } from "./hooks/useApi";
 import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { PlaylistDialog } from "./components/PlaylistDialog";
+import { VideoPlayer } from "./components/VideoPlayer";
 
-type View = { type: "library"; workspaceId?: string } | { type: "playlist"; playlistId: string };
+type View =
+  | { type: "library"; workspaceId?: string }
+  | { type: "playlist"; playlistId: string };
+
+function formatFilter(
+  f: PlaylistFilter,
+  workspaces: Workspace[],
+  verbose: boolean
+): string {
+  if (f.field === "workspace_id") {
+    const ws = workspaces.find((w) => w.id === f.value);
+    return verbose ? `workspace: ${ws?.name ?? "?"}` : ws?.name ?? "workspace";
+  }
+  return verbose ? `${f.field} ${f.operator} "${f.value}"` : f.value;
+}
 
 function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -30,12 +43,16 @@ function App() {
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [showWorkspaceDialog, setShowWorkspaceDialog] = useState(false);
   const [showPlaylistDialog, setShowPlaylistDialog] = useState(false);
+  const [editingPlaylist, setEditingPlaylist] = useState<Playlist | undefined>();
   const [statusMessage, setStatusMessage] = useState("");
+  const [playingFile, setPlayingFile] = useState<MediaFile | null>(null);
+  const [playQueue, setPlayQueue] = useState<MediaFile[]>([]);
+  const [playQueueIndex, setPlayQueueIndex] = useState(0);
+  const mediaListRef = useRef<HTMLDivElement>(null);
 
   const loadWorkspaces = useCallback(async () => {
     try {
-      const ws = await listWorkspaces();
-      setWorkspaces(ws);
+      setWorkspaces(await listWorkspaces());
     } catch (e) {
       console.error("Failed to load workspaces:", e);
     }
@@ -43,8 +60,7 @@ function App() {
 
   const loadPlaylists = useCallback(async () => {
     try {
-      const pl = await listPlaylists();
-      setPlaylists(pl);
+      setPlaylists(await listPlaylists());
     } catch (e) {
       console.error("Failed to load playlists:", e);
     }
@@ -53,15 +69,15 @@ function App() {
   const loadMediaFiles = useCallback(async () => {
     try {
       if (currentView.type === "playlist") {
-        const items = await getPlaylistItems(currentView.playlistId);
-        setMediaFiles(items);
+        setMediaFiles(await getPlaylistFiles(currentView.playlistId));
       } else {
-        const files = await listMediaFiles({
-          workspaceId: currentView.workspaceId,
-          search: searchQuery || undefined,
-          extension: extensionFilter || undefined,
-        });
-        setMediaFiles(files);
+        setMediaFiles(
+          await listMediaFiles({
+            workspaceId: currentView.workspaceId,
+            search: searchQuery || undefined,
+            extension: extensionFilter || undefined,
+          })
+        );
       }
     } catch (e) {
       console.error("Failed to load media files:", e);
@@ -76,6 +92,25 @@ function App() {
   useEffect(() => {
     loadMediaFiles();
   }, [loadMediaFiles]);
+
+  // Ctrl+A / Cmd+A
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        e.preventDefault();
+        setSelectedFiles((prev) => {
+          if (prev.size === mediaFiles.length && mediaFiles.length > 0) {
+            return new Set();
+          }
+          return new Set(mediaFiles.map((f) => f.id));
+        });
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [mediaFiles]);
 
   const handleAddWorkspace = async (name: string, path: string) => {
     try {
@@ -115,11 +150,27 @@ function App() {
     }
   };
 
-  const handleCreatePlaylist = async (name: string) => {
+  const handleCreatePlaylist = async (
+    name: string,
+    filters: PlaylistFilter[]
+  ) => {
     try {
-      await createPlaylist(name);
+      if (editingPlaylist) {
+        await updatePlaylist(editingPlaylist.id, name, filters);
+      } else {
+        await createPlaylist(name, filters);
+      }
       await loadPlaylists();
+      // Refresh if we're viewing this playlist
+      if (
+        editingPlaylist &&
+        currentView.type === "playlist" &&
+        currentView.playlistId === editingPlaylist.id
+      ) {
+        await loadMediaFiles();
+      }
       setShowPlaylistDialog(false);
+      setEditingPlaylist(undefined);
     } catch (e) {
       setStatusMessage(`Error: ${e}`);
     }
@@ -137,36 +188,39 @@ function App() {
     }
   };
 
-  const handleAddToPlaylist = async (playlistId: string) => {
-    try {
-      const ids = Array.from(selectedFiles);
-      if (ids.length === 0) return;
-      await addToPlaylist(playlistId, ids);
-      setStatusMessage(`Added ${ids.length} files to playlist`);
-      setSelectedFiles(new Set());
-      await loadPlaylists();
-      if (currentView.type === "playlist" && currentView.playlistId === playlistId) {
-        await loadMediaFiles();
+  const handlePlayFile = (file: MediaFile) => {
+    setPlayingFile(file);
+    setPlayQueue(mediaFiles);
+    setPlayQueueIndex(mediaFiles.findIndex((f) => f.id === file.id));
+  };
+
+  const handlePlayNext = () => {
+    if (playQueue.length === 0) return;
+    const nextIndex = (playQueueIndex + 1) % playQueue.length;
+    setPlayQueueIndex(nextIndex);
+    setPlayingFile(playQueue[nextIndex]);
+  };
+
+  const handlePlayPrev = () => {
+    if (playQueue.length === 0) return;
+    const prevIndex =
+      (playQueueIndex - 1 + playQueue.length) % playQueue.length;
+    setPlayQueueIndex(prevIndex);
+    setPlayingFile(playQueue[prevIndex]);
+  };
+
+  const handlePlayAll = (shuffle: boolean) => {
+    if (mediaFiles.length === 0) return;
+    let queue = [...mediaFiles];
+    if (shuffle) {
+      for (let i = queue.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [queue[i], queue[j]] = [queue[j], queue[i]];
       }
-    } catch (e) {
-      setStatusMessage(`Error: ${e}`);
     }
-  };
-
-  const handlePlayFile = async (path: string) => {
-    try {
-      await playFile(path);
-    } catch (e) {
-      setStatusMessage(`Error: ${e}`);
-    }
-  };
-
-  const handlePlayPlaylist = async (playlistId: string) => {
-    try {
-      await playPlaylist(playlistId);
-    } catch (e) {
-      setStatusMessage(`Error: ${e}`);
-    }
+    setPlayQueue(queue);
+    setPlayQueueIndex(0);
+    setPlayingFile(queue[0]);
   };
 
   const handleSetPlaybackMode = async (playlistId: string, mode: string) => {
@@ -190,9 +244,18 @@ function App() {
     });
   };
 
+  const selectAll = () => {
+    if (selectedFiles.size === mediaFiles.length) {
+      setSelectedFiles(new Set());
+    } else {
+      setSelectedFiles(new Set(mediaFiles.map((f) => f.id)));
+    }
+  };
+
   const formatSize = (bytes: number) => {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    if (bytes < 1024 * 1024 * 1024)
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   };
 
@@ -201,6 +264,8 @@ function App() {
     currentView.type === "playlist"
       ? playlists.find((p) => p.id === currentView.playlistId)
       : null;
+  const allSelected =
+    mediaFiles.length > 0 && selectedFiles.size === mediaFiles.length;
 
   return (
     <div className="app-layout">
@@ -217,7 +282,6 @@ function App() {
             onClick={() => setCurrentView({ type: "library" })}
           >
             All Media
-            <span className="count">{mediaFiles.length}</span>
           </div>
         </div>
 
@@ -227,7 +291,9 @@ function App() {
             <div
               key={ws.id}
               className={`sidebar-item ${currentView.type === "library" && currentView.workspaceId === ws.id ? "active" : ""}`}
-              onClick={() => setCurrentView({ type: "library", workspaceId: ws.id })}
+              onClick={() =>
+                setCurrentView({ type: "library", workspaceId: ws.id })
+              }
               onContextMenu={(e) => {
                 e.preventDefault();
                 if (confirm(`Remove workspace "${ws.name}"?`)) {
@@ -240,9 +306,8 @@ function App() {
             </div>
           ))}
           <div
-            className="sidebar-item"
+            className="sidebar-item accent"
             onClick={() => setShowWorkspaceDialog(true)}
-            style={{ color: "var(--accent)" }}
           >
             + Add Workspace
           </div>
@@ -254,22 +319,34 @@ function App() {
             <div
               key={pl.id}
               className={`sidebar-item ${currentView.type === "playlist" && currentView.playlistId === pl.id ? "active" : ""}`}
-              onClick={() => setCurrentView({ type: "playlist", playlistId: pl.id })}
+              onClick={() =>
+                setCurrentView({ type: "playlist", playlistId: pl.id })
+              }
               onContextMenu={(e) => {
                 e.preventDefault();
                 if (confirm(`Delete playlist "${pl.name}"?`)) {
                   handleDeletePlaylist(pl.id);
                 }
               }}
+              onDoubleClick={() => {
+                setEditingPlaylist(pl);
+                setShowPlaylistDialog(true);
+              }}
             >
               {pl.name}
-              <span className="count">{pl.item_count}</span>
+              <span className="count">
+                {pl.filters
+                  .map((f) => formatFilter(f, workspaces, false))
+                  .join(", ") || "no filters"}
+              </span>
             </div>
           ))}
           <div
-            className="sidebar-item"
-            onClick={() => setShowPlaylistDialog(true)}
-            style={{ color: "var(--accent)" }}
+            className="sidebar-item accent"
+            onClick={() => {
+              setEditingPlaylist(undefined);
+              setShowPlaylistDialog(true);
+            }}
           >
             + New Playlist
           </div>
@@ -286,6 +363,8 @@ function App() {
                 placeholder="Search files..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                autoCapitalize="off"
+                autoCorrect="off"
               />
               <select
                 className="filter-select"
@@ -299,12 +378,33 @@ function App() {
                   </option>
                 ))}
               </select>
+              {mediaFiles.length > 0 && (
+                <>
+                  <button
+                    className="btn btn-primary btn-small"
+                    onClick={() => handlePlayAll(false)}
+                  >
+                    Play
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-small"
+                    onClick={() => handlePlayAll(true)}
+                  >
+                    Shuffle
+                  </button>
+                </>
+              )}
             </>
           )}
           {currentView.type === "playlist" && currentPlaylist && (
             <>
-              <span style={{ fontSize: "14px", fontWeight: 600 }}>
+              <span className="playlist-title">
                 {currentPlaylist.name}
+              </span>
+              <span className="playlist-filter-desc">
+                {currentPlaylist.filters
+                  .map((f) => formatFilter(f, workspaces, true))
+                  .join(" & ")}
               </span>
               <select
                 className="filter-select"
@@ -319,56 +419,92 @@ function App() {
               </select>
               <button
                 className="btn btn-primary btn-small"
-                onClick={() => handlePlayPlaylist(currentPlaylist.id)}
+                onClick={() =>
+                  handlePlayAll(currentPlaylist.playback_mode === "random")
+                }
               >
                 Play
               </button>
+              <button
+                className="btn btn-secondary btn-small"
+                onClick={() => {
+                  setEditingPlaylist(currentPlaylist);
+                  setShowPlaylistDialog(true);
+                }}
+              >
+                Edit
+              </button>
             </>
-          )}
-          {selectedFiles.size > 0 && playlists.length > 0 && (
-            <select
-              className="filter-select"
-              value=""
-              onChange={(e) => {
-                if (e.target.value) handleAddToPlaylist(e.target.value);
-              }}
-            >
-              <option value="">
-                Add {selectedFiles.size} to playlist...
-              </option>
-              {playlists.map((pl) => (
-                <option key={pl.id} value={pl.id}>
-                  {pl.name}
-                </option>
-              ))}
-            </select>
           )}
         </div>
 
+        {/* Video player */}
+        {playingFile && (
+          <VideoPlayer
+            file={playingFile}
+            onClose={() => setPlayingFile(null)}
+            onNext={playQueue.length > 1 ? handlePlayNext : undefined}
+            onPrev={playQueue.length > 1 ? handlePlayPrev : undefined}
+            queuePosition={playQueueIndex + 1}
+            queueTotal={playQueue.length}
+          />
+        )}
+
         {mediaFiles.length === 0 ? (
           <div className="empty-state">
-            <h2>No media files</h2>
-            <p>Add a workspace to scan for video files</p>
-            <button
-              className="btn btn-primary"
-              onClick={() => setShowWorkspaceDialog(true)}
-            >
-              Add Workspace
-            </button>
+            {currentView.type === "playlist" ? (
+              <>
+                <h2>No matching files</h2>
+                <p>Adjust the filter conditions for this playlist</p>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setEditingPlaylist(currentPlaylist ?? undefined);
+                    setShowPlaylistDialog(true);
+                  }}
+                >
+                  Edit Playlist
+                </button>
+              </>
+            ) : (
+              <>
+                <h2>No media files</h2>
+                <p>Add a workspace to scan for video files</p>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setShowWorkspaceDialog(true)}
+                >
+                  Add Workspace
+                </button>
+              </>
+            )}
           </div>
         ) : (
-          <div className="media-list">
+          <div className="media-list" ref={mediaListRef}>
+            <div className="media-item media-list-header" onClick={selectAll}>
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={selectAll}
+                onClick={(e) => e.stopPropagation()}
+              />
+              <span className="filename">
+                {allSelected ? "Deselect all" : "Select all"} (
+                {mediaFiles.length})
+              </span>
+            </div>
             {mediaFiles.map((file) => (
               <div
                 key={file.id}
                 className={`media-item ${selectedFiles.has(file.id) ? "selected" : ""}`}
                 onClick={() => toggleFileSelection(file.id)}
-                onDoubleClick={() => handlePlayFile(file.path)}
+                onDoubleClick={() => handlePlayFile(file)}
               >
                 <input
                   type="checkbox"
                   checked={selectedFiles.has(file.id)}
                   onChange={() => toggleFileSelection(file.id)}
+                  onClick={(e) => e.stopPropagation()}
                 />
                 <span className="filename">{file.filename}</span>
                 {file.series_name && (
@@ -402,8 +538,13 @@ function App() {
       )}
       {showPlaylistDialog && (
         <PlaylistDialog
+          workspaces={workspaces}
+          existing={editingPlaylist}
           onSubmit={handleCreatePlaylist}
-          onClose={() => setShowPlaylistDialog(false)}
+          onClose={() => {
+            setShowPlaylistDialog(false);
+            setEditingPlaylist(undefined);
+          }}
         />
       )}
     </div>

@@ -34,19 +34,21 @@ pub struct MediaFileInsert {
     pub series_number: Option<i32>,
 }
 
+/// A playlist is a named set of filter conditions.
+/// When viewed, it dynamically queries media_files matching those filters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Playlist {
     pub id: String,
     pub name: String,
-    pub description: Option<String>,
-    pub is_smart: bool,
     pub playback_mode: String,
-    pub item_count: i64,
+    pub filters: Vec<PlaylistFilter>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlaylistFilter {
-    pub filter_type: String,
+    /// "filename", "extension", "path", "series_name", "workspace_id"
+    pub field: String,
+    /// "contains", "not_contains", "equals", "starts_with", "ends_with"
     pub operator: String,
     pub value: String,
 }

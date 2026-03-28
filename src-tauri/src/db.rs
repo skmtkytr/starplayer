@@ -47,42 +47,18 @@ impl Database {
                 FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
             );
 
-            CREATE TABLE IF NOT EXISTS tags (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE
-            );
-
-            CREATE TABLE IF NOT EXISTS media_tags (
-                media_id TEXT NOT NULL,
-                tag_id TEXT NOT NULL,
-                PRIMARY KEY (media_id, tag_id),
-                FOREIGN KEY (media_id) REFERENCES media_files(id) ON DELETE CASCADE,
-                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-            );
-
             CREATE TABLE IF NOT EXISTS playlists (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
-                description TEXT,
-                is_smart INTEGER NOT NULL DEFAULT 0,
                 playback_mode TEXT NOT NULL DEFAULT 'sequential',
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
-            CREATE TABLE IF NOT EXISTS playlist_items (
-                id TEXT PRIMARY KEY,
-                playlist_id TEXT NOT NULL,
-                media_id TEXT NOT NULL,
-                position INTEGER NOT NULL,
-                FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
-                FOREIGN KEY (media_id) REFERENCES media_files(id) ON DELETE CASCADE
-            );
-
             CREATE TABLE IF NOT EXISTS playlist_filters (
                 id TEXT PRIMARY KEY,
                 playlist_id TEXT NOT NULL,
-                filter_type TEXT NOT NULL,
+                field TEXT NOT NULL,
                 operator TEXT NOT NULL,
                 value TEXT NOT NULL,
                 FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
@@ -91,7 +67,6 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_media_workspace ON media_files(workspace_id);
             CREATE INDEX IF NOT EXISTS idx_media_filename ON media_files(filename);
             CREATE INDEX IF NOT EXISTS idx_media_series ON media_files(series_name, series_number);
-            CREATE INDEX IF NOT EXISTS idx_playlist_items_playlist ON playlist_items(playlist_id, position);
             ",
         )?;
         Ok(())
@@ -102,13 +77,41 @@ impl Database {
     }
 }
 
-// === Workspace operations ===
 use crate::models::*;
 
 impl Database {
+    // === Workspace operations ===
+
     pub fn add_workspace(&self, name: &str, path: &str) -> Result<Workspace> {
-        let id = uuid::Uuid::new_v4().to_string();
         let conn = self.conn();
+        let existing: Option<Workspace> = conn
+            .query_row(
+                "SELECT id, name, path FROM workspaces WHERE path = ?1",
+                params![path],
+                |row| {
+                    Ok(Workspace {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        path: row.get(2)?,
+                    })
+                },
+            )
+            .ok();
+        if let Some(ws) = existing {
+            if ws.name != name {
+                conn.execute(
+                    "UPDATE workspaces SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
+                    params![name, ws.id],
+                )?;
+                return Ok(Workspace {
+                    id: ws.id,
+                    name: name.to_string(),
+                    path: ws.path,
+                });
+            }
+            return Ok(ws);
+        }
+        let id = uuid::Uuid::new_v4().to_string();
         conn.execute(
             "INSERT INTO workspaces (id, name, path) VALUES (?1, ?2, ?3)",
             params![id, name, path],
@@ -153,14 +156,8 @@ impl Database {
                 series_number = excluded.series_number,
                 updated_at = datetime('now')",
             params![
-                file.id,
-                file.workspace_id,
-                file.path,
-                file.filename,
-                file.extension,
-                file.size_bytes,
-                file.series_name,
-                file.series_number,
+                file.id, file.workspace_id, file.path, file.filename,
+                file.extension, file.size_bytes, file.series_name, file.series_number,
             ],
         )?;
         Ok(())
@@ -197,22 +194,79 @@ impl Database {
         let mut stmt = conn.prepare(&sql)?;
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt.query_map(params_ref.as_slice(), |row| {
-            Ok(MediaFile {
-                id: row.get(0)?,
-                workspace_id: row.get(1)?,
-                path: row.get(2)?,
-                filename: row.get(3)?,
-                extension: row.get(4)?,
-                size_bytes: row.get(5)?,
-                duration_secs: row.get(6)?,
-                width: row.get(7)?,
-                height: row.get(8)?,
-                series_name: row.get(9)?,
-                series_number: row.get(10)?,
-            })
-        })?;
+        let rows = stmt.query_map(params_ref.as_slice(), Self::row_to_media_file)?;
         rows.collect()
+    }
+
+    /// Query media files matching a playlist's filter conditions.
+    pub fn query_playlist_files(&self, playlist_id: &str) -> Result<Vec<MediaFile>> {
+        let filters = self.get_playlist_filters(playlist_id)?;
+
+        let conn = self.conn();
+        let mut sql = String::from(
+            "SELECT id, workspace_id, path, filename, extension, size_bytes,
+                    duration_secs, width, height, series_name, series_number
+             FROM media_files WHERE 1=1",
+        );
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        for f in &filters {
+            let col = match f.field.as_str() {
+                "filename" => "filename",
+                "extension" => "extension",
+                "path" => "path",
+                "series_name" => "series_name",
+                "workspace_id" => "workspace_id",
+                _ => continue,
+            };
+
+            match f.operator.as_str() {
+                "contains" => {
+                    sql.push_str(&format!(" AND {col} LIKE ?"));
+                    param_values.push(Box::new(format!("%{}%", f.value)));
+                }
+                "not_contains" => {
+                    sql.push_str(&format!(" AND ({col} NOT LIKE ? OR {col} IS NULL)"));
+                    param_values.push(Box::new(format!("%{}%", f.value)));
+                }
+                "equals" => {
+                    sql.push_str(&format!(" AND {col} = ?"));
+                    param_values.push(Box::new(f.value.clone()));
+                }
+                "starts_with" => {
+                    sql.push_str(&format!(" AND {col} LIKE ?"));
+                    param_values.push(Box::new(format!("{}%", f.value)));
+                }
+                "ends_with" => {
+                    sql.push_str(&format!(" AND {col} LIKE ?"));
+                    param_values.push(Box::new(format!("%{}", f.value)));
+                }
+                _ => continue,
+            }
+        }
+        sql.push_str(" ORDER BY series_name, series_number, filename");
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_ref.as_slice(), Self::row_to_media_file)?;
+        rows.collect()
+    }
+
+    fn row_to_media_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<MediaFile> {
+        Ok(MediaFile {
+            id: row.get(0)?,
+            workspace_id: row.get(1)?,
+            path: row.get(2)?,
+            filename: row.get(3)?,
+            extension: row.get(4)?,
+            size_bytes: row.get(5)?,
+            duration_secs: row.get(6)?,
+            width: row.get(7)?,
+            height: row.get(8)?,
+            series_name: row.get(9)?,
+            series_number: row.get(10)?,
+        })
     }
 
     pub fn get_media_file(&self, id: &str) -> Result<Option<MediaFile>> {
@@ -222,21 +276,7 @@ impl Database {
                     duration_secs, width, height, series_name, series_number
              FROM media_files WHERE id = ?1",
         )?;
-        let mut rows = stmt.query_map(params![id], |row| {
-            Ok(MediaFile {
-                id: row.get(0)?,
-                workspace_id: row.get(1)?,
-                path: row.get(2)?,
-                filename: row.get(3)?,
-                extension: row.get(4)?,
-                size_bytes: row.get(5)?,
-                duration_secs: row.get(6)?,
-                width: row.get(7)?,
-                height: row.get(8)?,
-                series_name: row.get(9)?,
-                series_number: row.get(10)?,
-            })
-        })?;
+        let mut rows = stmt.query_map(params![id], Self::row_to_media_file)?;
         match rows.next() {
             Some(row) => Ok(Some(row?)),
             None => Ok(None),
@@ -245,46 +285,87 @@ impl Database {
 
     // === Playlist operations ===
 
-    pub fn create_playlist(
-        &self,
-        name: &str,
-        description: Option<&str>,
-        is_smart: bool,
-    ) -> Result<Playlist> {
+    pub fn create_playlist(&self, name: &str, filters: &[PlaylistFilter]) -> Result<Playlist> {
         let id = uuid::Uuid::new_v4().to_string();
         let conn = self.conn();
         conn.execute(
-            "INSERT INTO playlists (id, name, description, is_smart) VALUES (?1, ?2, ?3, ?4)",
-            params![id, name, description, is_smart as i32],
+            "INSERT INTO playlists (id, name) VALUES (?1, ?2)",
+            params![id, name],
         )?;
+        Self::insert_filters(&conn, &id, filters)?;
         Ok(Playlist {
             id,
             name: name.to_string(),
-            description: description.map(|s| s.to_string()),
-            is_smart,
             playback_mode: "sequential".to_string(),
-            item_count: 0,
+            filters: filters.to_vec(),
         })
     }
 
     pub fn list_playlists(&self) -> Result<Vec<Playlist>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT p.id, p.name, p.description, p.is_smart, p.playback_mode,
-                    (SELECT COUNT(*) FROM playlist_items pi WHERE pi.playlist_id = p.id) as item_count
-             FROM playlists p ORDER BY p.name",
+        let mut stmt =
+            conn.prepare("SELECT id, name, playback_mode FROM playlists ORDER BY name")?;
+        let playlists: Vec<(String, String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut result = Vec::new();
+        for (id, name, mode) in playlists {
+            let mut fstmt = conn.prepare(
+                "SELECT field, operator, value FROM playlist_filters WHERE playlist_id = ?1",
+            )?;
+            let filters: Vec<PlaylistFilter> = fstmt
+                .query_map(params![id], |row| {
+                    Ok(PlaylistFilter {
+                        field: row.get(0)?,
+                        operator: row.get(1)?,
+                        value: row.get(2)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>>>()?;
+            result.push(Playlist {
+                id,
+                name,
+                playback_mode: mode,
+                filters,
+            });
+        }
+        Ok(result)
+    }
+
+    pub fn update_playlist(&self, id: &str, name: &str, filters: &[PlaylistFilter]) -> Result<()> {
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE playlists SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![name, id],
         )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(Playlist {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                description: row.get(2)?,
-                is_smart: row.get::<_, i32>(3)? != 0,
-                playback_mode: row.get(4)?,
-                item_count: row.get(5)?,
-            })
-        })?;
-        rows.collect()
+        conn.execute(
+            "DELETE FROM playlist_filters WHERE playlist_id = ?1",
+            params![id],
+        )?;
+        Self::insert_filters(&conn, id, filters)?;
+        Ok(())
+    }
+
+    fn insert_filters(
+        conn: &Connection,
+        playlist_id: &str,
+        filters: &[PlaylistFilter],
+    ) -> Result<()> {
+        for f in filters {
+            conn.execute(
+                "INSERT INTO playlist_filters (id, playlist_id, field, operator, value)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    playlist_id,
+                    f.field,
+                    f.operator,
+                    f.value
+                ],
+            )?;
+        }
+        Ok(())
     }
 
     pub fn delete_playlist(&self, id: &str) -> Result<()> {
@@ -302,80 +383,14 @@ impl Database {
         Ok(())
     }
 
-    pub fn add_to_playlist(&self, playlist_id: &str, media_ids: &[String]) -> Result<()> {
-        let conn = self.conn();
-        let max_pos: i64 = conn
-            .query_row(
-                "SELECT COALESCE(MAX(position), -1) FROM playlist_items WHERE playlist_id = ?1",
-                params![playlist_id],
-                |row| row.get(0),
-            )
-            .unwrap_or(-1);
-
-        for (i, media_id) in media_ids.iter().enumerate() {
-            let id = uuid::Uuid::new_v4().to_string();
-            conn.execute(
-                "INSERT INTO playlist_items (id, playlist_id, media_id, position) VALUES (?1, ?2, ?3, ?4)",
-                params![id, playlist_id, media_id, max_pos + 1 + i as i64],
-            )?;
-        }
-        Ok(())
-    }
-
-    pub fn get_playlist_items(&self, playlist_id: &str) -> Result<Vec<MediaFile>> {
+    fn get_playlist_filters(&self, playlist_id: &str) -> Result<Vec<PlaylistFilter>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT m.id, m.workspace_id, m.path, m.filename, m.extension, m.size_bytes,
-                    m.duration_secs, m.width, m.height, m.series_name, m.series_number
-             FROM playlist_items pi
-             JOIN media_files m ON m.id = pi.media_id
-             WHERE pi.playlist_id = ?1
-             ORDER BY pi.position",
-        )?;
-        let rows = stmt.query_map(params![playlist_id], |row| {
-            Ok(MediaFile {
-                id: row.get(0)?,
-                workspace_id: row.get(1)?,
-                path: row.get(2)?,
-                filename: row.get(3)?,
-                extension: row.get(4)?,
-                size_bytes: row.get(5)?,
-                duration_secs: row.get(6)?,
-                width: row.get(7)?,
-                height: row.get(8)?,
-                series_name: row.get(9)?,
-                series_number: row.get(10)?,
-            })
-        })?;
-        rows.collect()
-    }
-
-    // === Playlist filter operations ===
-
-    pub fn add_playlist_filter(&self, playlist_id: &str, filter: &PlaylistFilter) -> Result<()> {
-        let conn = self.conn();
-        conn.execute(
-            "INSERT INTO playlist_filters (id, playlist_id, filter_type, operator, value)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                uuid::Uuid::new_v4().to_string(),
-                playlist_id,
-                filter.filter_type,
-                filter.operator,
-                filter.value,
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub fn get_playlist_filters(&self, playlist_id: &str) -> Result<Vec<PlaylistFilter>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT filter_type, operator, value FROM playlist_filters WHERE playlist_id = ?1",
+            "SELECT field, operator, value FROM playlist_filters WHERE playlist_id = ?1",
         )?;
         let rows = stmt.query_map(params![playlist_id], |row| {
             Ok(PlaylistFilter {
-                filter_type: row.get(0)?,
+                field: row.get(0)?,
                 operator: row.get(1)?,
                 value: row.get(2)?,
             })
