@@ -2,7 +2,6 @@ use crate::db::Database;
 use crate::models::*;
 use crate::scanner;
 use tauri::State;
-use tauri_plugin_shell::ShellExt;
 
 type DbState<'a> = State<'a, Database>;
 
@@ -107,11 +106,65 @@ pub fn get_playlist_files(db: DbState<'_>, playlist_id: String) -> Result<Vec<Me
 
 // === Player commands ===
 
+fn find_mpv() -> Result<std::path::PathBuf, String> {
+    // 1. Check bundled mpv next to the executable
+    if let Ok(exe) = std::env::current_exe() {
+        let exe_dir = exe.parent().unwrap_or(std::path::Path::new("."));
+
+        // macOS: binaries/mpv.app/Contents/MacOS/mpv (dev) or ../Resources/mpv.app/... (bundle)
+        for candidate in [
+            exe_dir.join("binaries/mpv.app/Contents/MacOS/mpv"),
+            exe_dir.join("mpv.app/Contents/MacOS/mpv"),
+            exe_dir.join("../Resources/mpv.app/Contents/MacOS/mpv"),
+            // Windows: mpv.exe next to starplayer.exe
+            exe_dir.join("mpv.exe"),
+            exe_dir.join("binaries/mpv.exe"),
+            // Dev mode: src-tauri/binaries/
+            exe_dir.join("../../binaries/mpv.app/Contents/MacOS/mpv"),
+            exe_dir.join("../../binaries/mpv.exe"),
+        ] {
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    // 2. Fallback: check src-tauri/binaries/ (dev mode, relative to cwd)
+    for candidate in [
+        std::path::PathBuf::from("src-tauri/binaries/mpv.app/Contents/MacOS/mpv"),
+        std::path::PathBuf::from("src-tauri/binaries/mpv.exe"),
+        std::path::PathBuf::from("binaries/mpv.app/Contents/MacOS/mpv"),
+        std::path::PathBuf::from("binaries/mpv.exe"),
+    ] {
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    // 3. Fallback: system PATH
+    let system_name = if cfg!(target_os = "windows") {
+        "mpv.exe"
+    } else {
+        "mpv"
+    };
+    if let Ok(output) = std::process::Command::new("which")
+        .arg(system_name)
+        .output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Ok(std::path::PathBuf::from(path));
+        }
+    }
+
+    Err("mpv not found. Run 'make ensure-mpv' to download it.".to_string())
+}
+
 #[tauri::command]
-pub async fn play_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    app.shell()
-        .sidecar("mpv")
-        .map_err(|e| format!("Failed to create mpv sidecar: {e}"))?
+pub fn play_file(path: String) -> Result<(), String> {
+    let mpv = find_mpv()?;
+    std::process::Command::new(&mpv)
         .args(["--force-window=yes", &path])
         .spawn()
         .map_err(|e| format!("Failed to start mpv: {e}"))?;
@@ -119,17 +172,17 @@ pub async fn play_file(app: tauri::AppHandle, path: String) -> Result<(), String
 }
 
 #[tauri::command]
-pub async fn play_files(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+pub fn play_files(paths: Vec<String>) -> Result<(), String> {
     if paths.is_empty() {
         return Err("No files to play".to_string());
     }
-    let mut args: Vec<String> = vec!["--force-window=yes".to_string()];
-    args.extend(paths);
-    app.shell()
-        .sidecar("mpv")
-        .map_err(|e| format!("Failed to create mpv sidecar: {e}"))?
-        .args(args.iter().map(|s| s.as_str()).collect::<Vec<_>>())
-        .spawn()
+    let mpv = find_mpv()?;
+    let mut cmd = std::process::Command::new(&mpv);
+    cmd.arg("--force-window=yes");
+    for p in &paths {
+        cmd.arg(p);
+    }
+    cmd.spawn()
         .map_err(|e| format!("Failed to start mpv: {e}"))?;
     Ok(())
 }
