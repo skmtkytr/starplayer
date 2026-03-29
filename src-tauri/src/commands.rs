@@ -178,7 +178,7 @@ fn find_vlc() -> Result<std::path::PathBuf, String> {
 pub fn play_file(path: String) -> Result<(), String> {
     let vlc = find_vlc()?;
     std::process::Command::new(&vlc)
-        .args(["--started-from-file", &path])
+        .arg(&path)
         .spawn()
         .map_err(|e| format!("Failed to start VLC: {e}"))?;
     Ok(())
@@ -191,7 +191,6 @@ pub fn play_files(paths: Vec<String>) -> Result<(), String> {
     }
     let vlc = find_vlc()?;
     let mut cmd = std::process::Command::new(&vlc);
-    cmd.arg("--started-from-file");
     for p in &paths {
         cmd.arg(p);
     }
