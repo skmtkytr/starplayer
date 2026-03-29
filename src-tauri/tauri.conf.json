@@ -23,7 +23,18 @@
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["**"]
+          "allow": [
+            "$HOME/**",
+            "/Volumes/**",
+            "/mnt/**",
+            "/media/**",
+            "/tmp/**",
+            "C:\\**",
+            "D:\\**",
+            "E:\\**",
+            "F:\\**",
+            "Z:\\**"
+          ]
         }
       }
     }
