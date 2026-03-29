@@ -86,3 +86,13 @@ export async function getPlaylistFiles(
 ): Promise<MediaFile[]> {
   return invoke("get_playlist_files", { playlistId });
 }
+
+// === Player API ===
+
+export async function playFile(path: string): Promise<void> {
+  return invoke("play_file", { path });
+}
+
+export async function playFiles(paths: string[]): Promise<void> {
+  return invoke("play_files", { paths });
+}

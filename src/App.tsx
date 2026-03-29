@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { Workspace, MediaFile, Playlist, PlaylistFilter } from "./types";
 import {
   listWorkspaces,
@@ -12,13 +12,11 @@ import {
   deletePlaylist,
   getPlaylistFiles,
   setPlaybackMode,
+  playFile,
+  playFiles,
 } from "./hooks/useApi";
 import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { PlaylistDialog } from "./components/PlaylistDialog";
-import { VideoPlayer } from "./components/VideoPlayer";
-import React from "react";
-
-const MemoizedVideoPlayer = React.memo(VideoPlayer);
 
 type View =
   | { type: "library"; workspaceId?: string }
@@ -48,10 +46,6 @@ function App() {
   const [showPlaylistDialog, setShowPlaylistDialog] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | undefined>();
   const [statusMessage, setStatusMessage] = useState("");
-  const [playingFile, setPlayingFile] = useState<MediaFile | null>(null);
-  const [playQueue, setPlayQueue] = useState<MediaFile[]>([]);
-  const [playQueueIndex, setPlayQueueIndex] = useState(0);
-  const mediaListRef = useRef<HTMLDivElement>(null);
 
   const loadWorkspaces = useCallback(async () => {
     try {
@@ -191,44 +185,28 @@ function App() {
     }
   };
 
-  const handlePlayFile = (file: MediaFile) => {
-    setPlayingFile(file);
-    setPlayQueue(mediaFiles);
-    setPlayQueueIndex(mediaFiles.findIndex((f) => f.id === file.id));
+  const handlePlayFile = async (file: MediaFile) => {
+    try {
+      await playFile(file.path);
+    } catch (e) {
+      setStatusMessage(`Error: ${e}`);
+    }
   };
 
-  const handlePlayNext = useCallback(() => {
-    setPlayQueueIndex((prev) => {
-      const next = (prev + 1) % playQueue.length;
-      setPlayingFile(playQueue[next] ?? null);
-      return next;
-    });
-  }, [playQueue]);
-
-  const handlePlayPrev = useCallback(() => {
-    setPlayQueueIndex((prev) => {
-      const prevIdx = (prev - 1 + playQueue.length) % playQueue.length;
-      setPlayingFile(playQueue[prevIdx] ?? null);
-      return prevIdx;
-    });
-  }, [playQueue]);
-
-  const handleClosePlayer = useCallback(() => {
-    setPlayingFile(null);
-  }, []);
-
-  const handlePlayAll = (shuffle: boolean) => {
+  const handlePlayAll = async (shuffle: boolean) => {
     if (mediaFiles.length === 0) return;
-    let queue = [...mediaFiles];
+    let paths = mediaFiles.map((f) => f.path);
     if (shuffle) {
-      for (let i = queue.length - 1; i > 0; i--) {
+      for (let i = paths.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [queue[i], queue[j]] = [queue[j], queue[i]];
+        [paths[i], paths[j]] = [paths[j], paths[i]];
       }
     }
-    setPlayQueue(queue);
-    setPlayQueueIndex(0);
-    setPlayingFile(queue[0]);
+    try {
+      await playFiles(paths);
+    } catch (e) {
+      setStatusMessage(`Error: ${e}`);
+    }
   };
 
   const handleSetPlaybackMode = async (playlistId: string, mode: string) => {
@@ -446,18 +424,6 @@ function App() {
           )}
         </div>
 
-        {/* Video player - rendered outside normal flow to avoid re-renders */}
-        {playingFile && (
-          <MemoizedVideoPlayer
-            file={playingFile}
-            onClose={handleClosePlayer}
-            onNext={playQueue.length > 1 ? handlePlayNext : undefined}
-            onPrev={playQueue.length > 1 ? handlePlayPrev : undefined}
-            queuePosition={playQueueIndex + 1}
-            queueTotal={playQueue.length}
-          />
-        )}
-
         {mediaFiles.length === 0 ? (
           <div className="empty-state">
             {currentView.type === "playlist" ? (
@@ -488,7 +454,7 @@ function App() {
             )}
           </div>
         ) : (
-          <div className="media-list" ref={mediaListRef}>
+          <div className="media-list">
             <div className="media-item media-list-header" onClick={selectAll}>
               <input
                 type="checkbox"

@@ -2,6 +2,7 @@ use crate::db::Database;
 use crate::models::*;
 use crate::scanner;
 use tauri::State;
+use tauri_plugin_shell::ShellExt;
 
 type DbState<'a> = State<'a, Database>;
 
@@ -102,4 +103,33 @@ pub fn set_playback_mode(db: DbState<'_>, playlist_id: String, mode: String) -> 
 pub fn get_playlist_files(db: DbState<'_>, playlist_id: String) -> Result<Vec<MediaFile>, String> {
     db.query_playlist_files(&playlist_id)
         .map_err(|e| e.to_string())
+}
+
+// === Player commands ===
+
+#[tauri::command]
+pub async fn play_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    app.shell()
+        .sidecar("mpv")
+        .map_err(|e| format!("Failed to create mpv sidecar: {e}"))?
+        .args(["--force-window=yes", &path])
+        .spawn()
+        .map_err(|e| format!("Failed to start mpv: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn play_files(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("No files to play".to_string());
+    }
+    let mut args: Vec<String> = vec!["--force-window=yes".to_string()];
+    args.extend(paths);
+    app.shell()
+        .sidecar("mpv")
+        .map_err(|e| format!("Failed to create mpv sidecar: {e}"))?
+        .args(args.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+        .spawn()
+        .map_err(|e| format!("Failed to start mpv: {e}"))?;
+    Ok(())
 }

@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  MPV_VERSION: "0.41.0"
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -37,6 +40,13 @@ jobs:
       - run: npm install
       - run: npx tsc --noEmit
       - run: npm test
+
+      - name: Create dummy mpv sidecar for build
+        run: |
+          mkdir -p src-tauri/binaries
+          touch src-tauri/binaries/mpv-x86_64-unknown-linux-gnu
+          chmod +x src-tauri/binaries/mpv-x86_64-unknown-linux-gnu
+
       - run: npm run build
       - run: cd src-tauri && cargo test
       - run: cd src-tauri && cargo clippy -- -D warnings
@@ -81,6 +91,32 @@ jobs:
         with:
           workspaces: src-tauri
           key: ${{ matrix.target }}
+
+      - name: Download mpv (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p src-tauri/binaries
+          curl -L "https://github.com/mpv-player/mpv/releases/download/v${MPV_VERSION}/mpv-v${MPV_VERSION}-macos-15-arm.zip" -o /tmp/mpv.zip
+          cd /tmp && unzip -o mpv.zip -d mpv-extract
+          cp /tmp/mpv-extract/mpv.app/Contents/MacOS/mpv $GITHUB_WORKSPACE/src-tauri/binaries/mpv-aarch64-apple-darwin
+          chmod +x $GITHUB_WORKSPACE/src-tauri/binaries/mpv-aarch64-apple-darwin
+
+      - name: Download mpv (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri\binaries
+          Invoke-WebRequest -Uri "https://github.com/mpv-player/mpv/releases/download/v$env:MPV_VERSION/mpv-v$env:MPV_VERSION-x86_64-pc-windows-msvc.zip" -OutFile "$env:TEMP\mpv.zip"
+          Expand-Archive -Path "$env:TEMP\mpv.zip" -DestinationPath "$env:TEMP\mpv-extract" -Force
+          Copy-Item "$env:TEMP\mpv-extract\mpv.exe" -Destination "src-tauri\binaries\mpv-x86_64-pc-windows-msvc.exe"
+
+      - name: Download mpv (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p src-tauri/binaries
+          sudo apt-get install -y mpv
+          cp $(which mpv) src-tauri/binaries/mpv-x86_64-unknown-linux-gnu
+          chmod +x src-tauri/binaries/mpv-x86_64-unknown-linux-gnu
 
       - run: npm install
       - run: npx tauri build --target ${{ matrix.target }}

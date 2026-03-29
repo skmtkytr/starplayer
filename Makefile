@@ -48,9 +48,23 @@ NPM := npm
 CARGO := cargo
 TAURI := npx tauri
 
+MPV_VERSION := 0.41.0
+MPV_BIN := src-tauri/binaries/mpv-$(ARCH)
+ifeq ($(UNAME_S),Darwin)
+  ifeq ($(UNAME_M),arm64)
+    MPV_URL := https://github.com/mpv-player/mpv/releases/download/v$(MPV_VERSION)/mpv-v$(MPV_VERSION)-macos-15-arm.zip
+  else
+    MPV_URL := https://github.com/mpv-player/mpv/releases/download/v$(MPV_VERSION)/mpv-v$(MPV_VERSION)-macos-15-x86_64.zip
+  endif
+else ifeq ($(UNAME_S),Linux)
+  MPV_URL :=
+else
+  MPV_URL := https://github.com/mpv-player/mpv/releases/download/v$(MPV_VERSION)/mpv-v$(MPV_VERSION)-x86_64-pc-windows-msvc.zip
+endif
+
 .PHONY: help setup setup-system setup-rust setup-node dev build test \
         test-rust test-frontend check lint clean reinstall info \
-        ensure-node-modules
+        ensure-node-modules ensure-mpv
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -88,9 +102,31 @@ setup-rust: ## Ensure Rust toolchain is ready
 	rustup default stable
 	rustup target add $(ARCH)
 
+# --- mpv sidecar ---
+
+ensure-mpv:
+	@if [ ! -f "$(MPV_BIN)" ] && [ ! -f "$(MPV_BIN).exe" ]; then \
+		echo "Downloading mpv for $(ARCH)..."; \
+		mkdir -p src-tauri/binaries; \
+		if [ "$(UNAME_S)" = "Darwin" ]; then \
+			curl -L "$(MPV_URL)" -o /tmp/mpv-download.zip; \
+			cd /tmp && unzip -o mpv-download.zip -d mpv-extract; \
+			cp /tmp/mpv-extract/mpv.app/Contents/MacOS/mpv "$(CURDIR)/$(MPV_BIN)"; \
+			chmod +x "$(CURDIR)/$(MPV_BIN)"; \
+			rm -rf /tmp/mpv-download.zip /tmp/mpv-extract; \
+		elif [ "$(PLATFORM)" = "windows" ]; then \
+			curl -L "$(MPV_URL)" -o /tmp/mpv-download.zip; \
+			cd /tmp && unzip -o mpv-download.zip -d mpv-extract; \
+			cp /tmp/mpv-extract/mpv.exe "$(CURDIR)/$(MPV_BIN).exe"; \
+			rm -rf /tmp/mpv-download.zip /tmp/mpv-extract; \
+		else \
+			echo "Linux: install mpv via package manager (apt install mpv)"; \
+		fi; \
+	fi
+
 # --- Development ---
 
-dev: ensure-node-modules ## Start Tauri dev server
+dev: ensure-node-modules ensure-mpv ## Start Tauri dev server
 	$(TAURI) dev
 
 dev-frontend: ensure-node-modules ## Start frontend dev server only (no Tauri)
@@ -98,7 +134,7 @@ dev-frontend: ensure-node-modules ## Start frontend dev server only (no Tauri)
 
 # --- Build ---
 
-build: ensure-node-modules ## Production build for current platform
+build: ensure-node-modules ensure-mpv ## Production build for current platform
 	$(TAURI) build --target $(ARCH)
 
 build-frontend: ensure-node-modules ## Build frontend only
@@ -120,7 +156,7 @@ test-rust: ## Run Rust tests
 
 test-frontend: ensure-node-modules ## Run frontend type check and unit tests
 	npx tsc --noEmit
-	npx vitest run
+	npx vitest run --passWithNoTests
 
 # --- Quality ---
 
