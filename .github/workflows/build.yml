@@ -94,12 +94,12 @@ jobs:
 
       - name: Download VLC (Windows)
         if: matrix.os == 'windows-latest'
-        shell: pwsh
+        shell: bash
         run: |
-          New-Item -ItemType Directory -Force -Path src-tauri\binaries
-          Invoke-WebRequest -Uri "https://get.videolan.org/vlc/$env:VLC_VERSION/win64/vlc-$env:VLC_VERSION-win64.zip" -OutFile "$env:TEMP\vlc.zip"
-          Expand-Archive -Path "$env:TEMP\vlc.zip" -DestinationPath "$env:TEMP\vlc-extract" -Force
-          Move-Item "$env:TEMP\vlc-extract\vlc-$env:VLC_VERSION" -Destination "src-tauri\binaries\vlc"
+          mkdir -p src-tauri/binaries
+          curl -L "https://get.videolan.org/vlc/${VLC_VERSION}/win64/vlc-${VLC_VERSION}-win64.zip" -o /tmp/vlc.zip
+          cd /tmp && unzip -o vlc.zip -d vlc-extract
+          mv /tmp/vlc-extract/vlc-${VLC_VERSION} "$GITHUB_WORKSPACE/src-tauri/binaries/vlc"
 
       - name: Download VLC (Linux)
         if: matrix.os == 'ubuntu-latest'
