@@ -1,18 +1,6 @@
 import { useRef, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import type { MediaFile } from "../types";
-
-let cachedPort: number | null = null;
-
-async function getPort(): Promise<number> {
-  if (cachedPort) return cachedPort;
-  cachedPort = await invoke<number>("get_media_server_port");
-  return cachedPort;
-}
-
-function streamUrl(port: number, filePath: string): string {
-  return `http://127.0.0.1:${port}/stream/${encodeURIComponent(filePath)}`;
-}
 
 interface Props {
   file: MediaFile;
@@ -33,23 +21,16 @@ export function VideoPlayer({
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const [videoSrc, setVideoSrc] = useState<string | null>(null);
+
+  const videoSrc = convertFileSrc(file.path);
 
   useEffect(() => {
     setError(null);
-    setVideoSrc(null);
-    getPort().then((port) => {
-      const url = streamUrl(port, file.path);
-      setVideoSrc(url);
-    });
-  }, [file.id, file.path]);
-
-  useEffect(() => {
-    if (videoSrc && videoRef.current) {
+    if (videoRef.current) {
       videoRef.current.load();
       videoRef.current.play().catch(() => {});
     }
-  }, [videoSrc]);
+  }, [file.id]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -135,7 +116,7 @@ export function VideoPlayer({
             Supported: MP4 (H.264/H.265), WebM, MOV, OGG
           </p>
         </div>
-      ) : videoSrc ? (
+      ) : (
         <video
           ref={videoRef}
           className="video-element"
@@ -149,10 +130,6 @@ export function VideoPlayer({
             )
           }
         />
-      ) : (
-        <div className="video-player-error">
-          <p>Loading...</p>
-        </div>
       )}
     </div>
   );
