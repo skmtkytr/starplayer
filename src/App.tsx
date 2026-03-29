@@ -187,9 +187,10 @@ function App() {
 
   const handlePlayFile = async (file: MediaFile) => {
     try {
+      setStatusMessage(`Playing: ${file.filename}`);
       await playFile(file.path);
     } catch (e) {
-      setStatusMessage(`Error: ${e}`);
+      setStatusMessage(`Play error: ${e}`);
     }
   };
 
@@ -203,9 +204,10 @@ function App() {
       }
     }
     try {
+      setStatusMessage(`Playing ${paths.length} files...`);
       await playFiles(paths);
     } catch (e) {
-      setStatusMessage(`Error: ${e}`);
+      setStatusMessage(`Play error: ${e}`);
     }
   };
 
