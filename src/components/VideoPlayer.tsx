@@ -1,24 +1,17 @@
 import { useRef, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { MediaFile } from "../types";
 
-function streamUrl(filePath: string): string {
-  const encoded = encodeURIComponent(filePath);
-  // Tauri custom protocols:
-  //   Windows WebView2: https://<scheme>.localhost/<path>
-  //   macOS/Linux:      <scheme>://localhost/<path>
-  const isWindows = navigator.platform.startsWith("Win") ||
-    navigator.userAgent.includes("Windows");
-  if (isWindows) {
-    return `https://stream.localhost/${encoded}`;
-  }
-  return `stream://localhost/${encoded}`;
+let cachedPort: number | null = null;
+
+async function getPort(): Promise<number> {
+  if (cachedPort) return cachedPort;
+  cachedPort = await invoke<number>("get_media_server_port");
+  return cachedPort;
 }
 
-// Debug: log URL and test connectivity
-function debugStreamUrl(file: MediaFile): string {
-  const url = streamUrl(file.path);
-  console.log("[VideoPlayer] stream URL:", url);
-  return url;
+function streamUrl(port: number, filePath: string): string {
+  return `http://127.0.0.1:${port}/stream/${encodeURIComponent(filePath)}`;
 }
 
 interface Props {
@@ -40,18 +33,23 @@ export function VideoPlayer({
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const videoSrc = debugStreamUrl(file);
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
 
   useEffect(() => {
     setError(null);
-    if (videoRef.current) {
+    setVideoSrc(null);
+    getPort().then((port) => {
+      const url = streamUrl(port, file.path);
+      setVideoSrc(url);
+    });
+  }, [file.id, file.path]);
+
+  useEffect(() => {
+    if (videoSrc && videoRef.current) {
       videoRef.current.load();
-      videoRef.current.play().catch(() => {
-        // Autoplay may be blocked, user can click play
-      });
+      videoRef.current.play().catch(() => {});
     }
-  }, [file.id]);
+  }, [videoSrc]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -136,11 +134,8 @@ export function VideoPlayer({
             <br />
             Supported: MP4 (H.264/H.265), WebM, MOV, OGG
           </p>
-          <p style={{ fontSize: "10px", color: "var(--text-secondary)", wordBreak: "break-all" }}>
-            URL: {videoSrc}
-          </p>
         </div>
-      ) : (
+      ) : videoSrc ? (
         <video
           ref={videoRef}
           className="video-element"
@@ -154,6 +149,10 @@ export function VideoPlayer({
             )
           }
         />
+      ) : (
+        <div className="video-player-error">
+          <p>Loading...</p>
+        </div>
       )}
     </div>
   );

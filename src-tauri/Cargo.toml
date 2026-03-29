@@ -20,6 +20,8 @@ rusqlite = { version = "0.33", features = ["bundled"] }
 walkdir = "2"
 uuid = { version = "1", features = ["v4"] }
 urlencoding = "2"
+tiny_http = "0.12"
+portpicker = "0.1"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
