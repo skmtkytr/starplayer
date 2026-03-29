@@ -1,6 +1,29 @@
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import type { MediaFile } from "../types";
+
+/**
+ * Convert a local file path to an asset protocol URL.
+ * Encodes each path segment individually to handle special characters
+ * like @, #, ?, etc. that break the default convertFileSrc.
+ */
+function fileToAssetUrl(filePath: string): string {
+  // Normalize backslashes to forward slashes
+  const normalized = filePath.replace(/\\/g, "/");
+  // Encode each segment, preserving path structure
+  const encoded = normalized
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  // macOS/Linux: asset://localhost/path
+  // Windows: https://asset.localhost/path
+  const isWindows =
+    navigator.platform.startsWith("Win") ||
+    navigator.userAgent.includes("Windows");
+  if (isWindows) {
+    return `https://asset.localhost/${encoded}`;
+  }
+  return `asset://localhost/${encoded}`;
+}
 
 interface Props {
   file: MediaFile;
@@ -23,7 +46,7 @@ export function VideoPlayer({
   const [error, setError] = useState<string | null>(null);
 
   // Stable URL - only recompute when file path changes
-  const videoSrc = useMemo(() => convertFileSrc(file.path), [file.path]);
+  const videoSrc = useMemo(() => fileToAssetUrl(file.path), [file.path]);
 
   // Only reload when file actually changes
   const prevFileId = useRef(file.id);
@@ -90,7 +113,7 @@ export function VideoPlayer({
 
   const handleError = useCallback(() => {
     setError(
-      `Cannot play: .${file.extension} | URL: ${convertFileSrc(file.path)}`
+      `Cannot play: .${file.extension} | URL: ${fileToAssetUrl(file.path)}`
     );
   }, [file.extension, file.path]);
 
