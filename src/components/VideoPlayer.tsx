@@ -9,11 +9,13 @@ import type { MediaFile } from "../types";
 function fileToAssetUrl(filePath: string): string {
   // Normalize backslashes to forward slashes
   const normalized = filePath.replace(/\\/g, "/");
-  // Encode each path segment individually, filter out empty segments from split
+  // Encode each path segment individually, preserving / separators
   const segments = normalized.split("/");
   const encoded = segments
     .map((segment) => (segment === "" ? "" : encodeURIComponent(segment)))
     .join("/");
+  // Ensure path starts with / (Windows drive paths like C:/ don't have leading /)
+  const path = encoded.startsWith("/") ? encoded : `/${encoded}`;
   // Tauri v2 custom protocols:
   //   Windows WebView2: https://<scheme>.localhost/<path>
   //   macOS/Linux:      <scheme>://localhost/<path>
@@ -23,9 +25,9 @@ function fileToAssetUrl(filePath: string): string {
     typeof w.__TAURI_INTERNALS__ !== "undefined" &&
     navigator.userAgent.includes("Windows");
   if (isTauriWindows) {
-    return `https://asset.localhost${encoded}`;
+    return `https://asset.localhost${path}`;
   }
-  return `asset://localhost${encoded}`;
+  return `asset://localhost${path}`;
 }
 
 interface Props {
