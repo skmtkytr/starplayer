@@ -69,21 +69,12 @@ info: ## Show detected platform info
 # --- Arch-aware node_modules ---
 
 ensure-node-modules:
-ifneq ($(CURRENT_STAMP),$(ARCH_SHORT))
-	@echo "Arch changed ($(or $(CURRENT_STAMP),none) -> $(ARCH_SHORT)), reinstalling node_modules..."
-	rm -rf node_modules package-lock.json
-	$(NPM) install
-	@echo "$(ARCH_SHORT)" > $(NODE_STAMP)
-else
-	@# node_modules is up to date for this arch
-endif
-
-# Also handle package.json changes
-$(NODE_STAMP): package.json
-	@echo "package.json changed, reinstalling node_modules..."
-	rm -rf node_modules package-lock.json
-	$(NPM) install
-	@echo "$(ARCH_SHORT)" > $(NODE_STAMP)
+	@if [ ! -d node_modules ] || [ "$(CURRENT_STAMP)" != "$(ARCH_SHORT)" ]; then \
+		echo "Installing node_modules for $(ARCH_SHORT)..."; \
+		rm -rf node_modules package-lock.json; \
+		$(NPM) install; \
+		echo "$(ARCH_SHORT)" > $(NODE_STAMP); \
+	fi
 
 # --- Setup ---
 
@@ -127,8 +118,9 @@ test: test-rust test-frontend ## Run all tests
 test-rust: ## Run Rust tests
 	cd src-tauri && $(CARGO) test
 
-test-frontend: ensure-node-modules ## Run frontend type check
+test-frontend: ensure-node-modules ## Run frontend type check and unit tests
 	npx tsc --noEmit
+	npx vitest run
 
 # --- Quality ---
 
