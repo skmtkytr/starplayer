@@ -16,6 +16,9 @@ import {
 import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { PlaylistDialog } from "./components/PlaylistDialog";
 import { VideoPlayer } from "./components/VideoPlayer";
+import React from "react";
+
+const MemoizedVideoPlayer = React.memo(VideoPlayer);
 
 type View =
   | { type: "library"; workspaceId?: string }
@@ -194,20 +197,25 @@ function App() {
     setPlayQueueIndex(mediaFiles.findIndex((f) => f.id === file.id));
   };
 
-  const handlePlayNext = () => {
-    if (playQueue.length === 0) return;
-    const nextIndex = (playQueueIndex + 1) % playQueue.length;
-    setPlayQueueIndex(nextIndex);
-    setPlayingFile(playQueue[nextIndex]);
-  };
+  const handlePlayNext = useCallback(() => {
+    setPlayQueueIndex((prev) => {
+      const next = (prev + 1) % playQueue.length;
+      setPlayingFile(playQueue[next] ?? null);
+      return next;
+    });
+  }, [playQueue]);
 
-  const handlePlayPrev = () => {
-    if (playQueue.length === 0) return;
-    const prevIndex =
-      (playQueueIndex - 1 + playQueue.length) % playQueue.length;
-    setPlayQueueIndex(prevIndex);
-    setPlayingFile(playQueue[prevIndex]);
-  };
+  const handlePlayPrev = useCallback(() => {
+    setPlayQueueIndex((prev) => {
+      const prevIdx = (prev - 1 + playQueue.length) % playQueue.length;
+      setPlayingFile(playQueue[prevIdx] ?? null);
+      return prevIdx;
+    });
+  }, [playQueue]);
+
+  const handleClosePlayer = useCallback(() => {
+    setPlayingFile(null);
+  }, []);
 
   const handlePlayAll = (shuffle: boolean) => {
     if (mediaFiles.length === 0) return;
@@ -438,11 +446,11 @@ function App() {
           )}
         </div>
 
-        {/* Video player */}
+        {/* Video player - rendered outside normal flow to avoid re-renders */}
         {playingFile && (
-          <VideoPlayer
+          <MemoizedVideoPlayer
             file={playingFile}
-            onClose={() => setPlayingFile(null)}
+            onClose={handleClosePlayer}
             onNext={playQueue.length > 1 ? handlePlayNext : undefined}
             onPrev={playQueue.length > 1 ? handlePlayPrev : undefined}
             queuePosition={playQueueIndex + 1}

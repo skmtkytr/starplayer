@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { MediaFile } from "../types";
 
@@ -22,24 +22,40 @@ export function VideoPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const videoSrc = convertFileSrc(file.path);
+  // Stable URL - only recompute when file path changes
+  const videoSrc = useMemo(() => convertFileSrc(file.path), [file.path]);
 
+  // Only reload when file actually changes
+  const prevFileId = useRef(file.id);
   useEffect(() => {
-    setError(null);
-    if (videoRef.current) {
-      videoRef.current.load();
-      videoRef.current.play().catch(() => {});
+    if (prevFileId.current !== file.id) {
+      prevFileId.current = file.id;
+      setError(null);
+      if (videoRef.current) {
+        videoRef.current.load();
+        videoRef.current.play().catch(() => {});
+      }
     }
   }, [file.id]);
 
-  // Keyboard shortcuts
+  // Stable callback refs to avoid re-binding keyboard handler
+  const onCloseRef = useRef(onClose);
+  const onNextRef = useRef(onNext);
+  const onPrevRef = useRef(onPrev);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+    onNextRef.current = onNext;
+    onPrevRef.current = onPrev;
+  });
+
+  // Keyboard shortcuts - single stable listener
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const v = videoRef.current;
       if (e.key === "Escape") {
-        onClose();
-      } else if (e.key === "n" && onNext) {
-        onNext();
+        onCloseRef.current();
+      } else if (e.key === "n" && onNextRef.current) {
+        onNextRef.current();
       } else if (e.key === "ArrowRight" && (e.ctrlKey || e.metaKey) && v) {
         e.preventDefault();
         v.currentTime = Math.min(v.currentTime + 60, v.duration || Infinity);
@@ -64,11 +80,17 @@ export function VideoPlayer({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onClose, onNext, onPrev]);
+  }, []); // Empty deps - uses refs for callbacks
 
-  const handleEnded = () => {
-    if (onNext) onNext();
-  };
+  const handleEnded = useCallback(() => {
+    onNextRef.current?.();
+  }, []);
+
+  const handleError = useCallback(() => {
+    setError(
+      `Cannot play this file. Format may not be supported: .${file.extension}`
+    );
+  }, [file.extension]);
 
   return (
     <div className="video-player">
@@ -124,11 +146,7 @@ export function VideoPlayer({
           controls
           autoPlay
           onEnded={handleEnded}
-          onError={() =>
-            setError(
-              `Cannot play this file. Format may not be supported: .${file.extension}`
-            )
-          }
+          onError={handleError}
         />
       )}
     </div>
