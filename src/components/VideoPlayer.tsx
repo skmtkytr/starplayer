@@ -8,21 +8,29 @@ import type { MediaFile } from "../types";
  */
 function fileToAssetUrl(filePath: string): string {
   // Normalize backslashes to forward slashes
-  const normalized = filePath.replace(/\\/g, "/");
+  let normalized = filePath.replace(/\\/g, "/");
+  // Preserve UNC path prefix: //server/share -> keep leading //
+  const isUnc = normalized.startsWith("//");
+  // Remove leading slashes for encoding, re-add after
+  normalized = normalized.replace(/^\/+/, "");
   // Encode each segment, preserving path structure
   const encoded = normalized
     .split("/")
     .map((segment) => encodeURIComponent(segment))
     .join("/");
-  // macOS/Linux: asset://localhost/path
-  // Windows: https://asset.localhost/path
-  const isWindows =
-    navigator.platform.startsWith("Win") ||
+  const path = isUnc ? `//${encoded}` : `/${encoded}`;
+  // Tauri v2 custom protocols:
+  //   Windows WebView2: https://<scheme>.localhost/<path>
+  //   macOS/Linux:      <scheme>://localhost/<path>
+  // Use window.__TAURI_INTERNALS__ to detect Tauri on Windows reliably
+  const w = window as unknown as Record<string, unknown>;
+  const isTauriWindows =
+    typeof w.__TAURI_INTERNALS__ !== "undefined" &&
     navigator.userAgent.includes("Windows");
-  if (isWindows) {
-    return `https://asset.localhost/${encoded}`;
+  if (isTauriWindows) {
+    return `https://asset.localhost${path}`;
   }
-  return `asset://localhost/${encoded}`;
+  return `asset://localhost${path}`;
 }
 
 interface Props {
