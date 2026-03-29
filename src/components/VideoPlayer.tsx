@@ -69,6 +69,8 @@ export function VideoPlayer({
         e.preventDefault();
         v.currentTime = Math.max(v.currentTime - 5, 0);
       } else if (e.key === " ") {
+        // Skip if video element has focus (native controls handle it)
+        if (document.activeElement === videoRef.current) return;
         e.preventDefault();
         if (v) {
           if (v.paused) v.play();
