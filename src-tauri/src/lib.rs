@@ -32,10 +32,16 @@ pub fn run() {
         .register_asynchronous_uri_scheme_protocol("stream", |_ctx, request, responder| {
             std::thread::spawn(move || {
                 let uri = request.uri().to_string();
-                // URI format: stream://localhost/<encoded_path>
+                // URI format varies by platform:
+                //   macOS/Linux: stream://localhost/<encoded_path>
+                //   Windows:     https://stream.localhost/<encoded_path>
                 let path = uri
                     .strip_prefix("stream://localhost/")
                     .or_else(|| uri.strip_prefix("stream://localhost"))
+                    .or_else(|| uri.strip_prefix("https://stream.localhost/"))
+                    .or_else(|| uri.strip_prefix("https://stream.localhost"))
+                    .or_else(|| uri.strip_prefix("http://stream.localhost/"))
+                    .or_else(|| uri.strip_prefix("http://stream.localhost"))
                     .unwrap_or("");
                 let path = urlencoding::decode(path).unwrap_or_default().to_string();
 
