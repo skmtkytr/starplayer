@@ -106,22 +106,22 @@ pub fn get_playlist_files(db: DbState<'_>, playlist_id: String) -> Result<Vec<Me
 
 // === Player commands ===
 
-fn find_mpv() -> Result<std::path::PathBuf, String> {
-    // 1. Check bundled mpv next to the executable
+fn find_vlc() -> Result<std::path::PathBuf, String> {
+    // 1. Check bundled VLC next to the executable
     if let Ok(exe) = std::env::current_exe() {
         let exe_dir = exe.parent().unwrap_or(std::path::Path::new("."));
 
-        // macOS: binaries/mpv.app/Contents/MacOS/mpv (dev) or ../Resources/mpv.app/... (bundle)
         for candidate in [
-            exe_dir.join("binaries/mpv.app/Contents/MacOS/mpv"),
-            exe_dir.join("mpv.app/Contents/MacOS/mpv"),
-            exe_dir.join("../Resources/mpv.app/Contents/MacOS/mpv"),
-            // Windows: mpv.exe next to starplayer.exe
-            exe_dir.join("mpv.exe"),
-            exe_dir.join("binaries/mpv.exe"),
-            // Dev mode: src-tauri/binaries/
-            exe_dir.join("../../binaries/mpv.app/Contents/MacOS/mpv"),
-            exe_dir.join("../../binaries/mpv.exe"),
+            // macOS dev: src-tauri/target/debug/ → ../../binaries/vlc/Contents/MacOS/VLC
+            exe_dir.join("../../binaries/vlc/Contents/MacOS/VLC"),
+            // macOS bundled: .app/Contents/MacOS/ → ../Resources/vlc/Contents/MacOS/VLC
+            exe_dir.join("../Resources/vlc/Contents/MacOS/VLC"),
+            exe_dir.join("binaries/vlc/Contents/MacOS/VLC"),
+            // Windows dev: src-tauri/target/debug/ → ../../binaries/vlc/vlc.exe
+            exe_dir.join("../../binaries/vlc/vlc.exe"),
+            // Windows bundled
+            exe_dir.join("vlc/vlc.exe"),
+            exe_dir.join("binaries/vlc/vlc.exe"),
         ] {
             if candidate.exists() {
                 return Ok(candidate);
@@ -129,45 +129,58 @@ fn find_mpv() -> Result<std::path::PathBuf, String> {
         }
     }
 
-    // 2. Fallback: check src-tauri/binaries/ (dev mode, relative to cwd)
+    // 2. Fallback: relative to cwd (dev mode)
     for candidate in [
-        std::path::PathBuf::from("src-tauri/binaries/mpv.app/Contents/MacOS/mpv"),
-        std::path::PathBuf::from("src-tauri/binaries/mpv.exe"),
-        std::path::PathBuf::from("binaries/mpv.app/Contents/MacOS/mpv"),
-        std::path::PathBuf::from("binaries/mpv.exe"),
+        std::path::PathBuf::from("src-tauri/binaries/vlc/Contents/MacOS/VLC"),
+        std::path::PathBuf::from("src-tauri/binaries/vlc/vlc.exe"),
+        std::path::PathBuf::from("binaries/vlc/Contents/MacOS/VLC"),
+        std::path::PathBuf::from("binaries/vlc/vlc.exe"),
     ] {
         if candidate.exists() {
             return Ok(candidate);
         }
     }
 
-    // 3. Fallback: system PATH
-    let system_name = if cfg!(target_os = "windows") {
-        "mpv.exe"
+    // 3. Fallback: system-installed VLC
+    if cfg!(target_os = "macos") {
+        let system = std::path::PathBuf::from("/Applications/VLC.app/Contents/MacOS/VLC");
+        if system.exists() {
+            return Ok(system);
+        }
+    } else if cfg!(target_os = "windows") {
+        for candidate in [
+            r"C:\Program Files\VideoLAN\VLC\vlc.exe",
+            r"C:\Program Files (x86)\VideoLAN\VLC\vlc.exe",
+        ] {
+            let p = std::path::PathBuf::from(candidate);
+            if p.exists() {
+                return Ok(p);
+            }
+        }
     } else {
-        "mpv"
-    };
-    if let Ok(output) = std::process::Command::new("which")
-        .arg(system_name)
-        .output()
-        && output.status.success()
-    {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Ok(std::path::PathBuf::from(path));
+        // Linux: check PATH
+        if let Ok(output) = std::process::Command::new("which")
+            .arg("vlc")
+            .output()
+            && output.status.success()
+        {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(std::path::PathBuf::from(path));
+            }
         }
     }
 
-    Err("mpv not found. Run 'make ensure-mpv' to download it.".to_string())
+    Err("VLC not found. Run 'make ensure-vlc' to download it.".to_string())
 }
 
 #[tauri::command]
 pub fn play_file(path: String) -> Result<(), String> {
-    let mpv = find_mpv()?;
-    std::process::Command::new(&mpv)
-        .args(["--force-window=yes", &path])
+    let vlc = find_vlc()?;
+    std::process::Command::new(&vlc)
+        .args(["--started-from-file", &path])
         .spawn()
-        .map_err(|e| format!("Failed to start mpv: {e}"))?;
+        .map_err(|e| format!("Failed to start VLC: {e}"))?;
     Ok(())
 }
 
@@ -176,13 +189,13 @@ pub fn play_files(paths: Vec<String>) -> Result<(), String> {
     if paths.is_empty() {
         return Err("No files to play".to_string());
     }
-    let mpv = find_mpv()?;
-    let mut cmd = std::process::Command::new(&mpv);
-    cmd.arg("--force-window=yes");
+    let vlc = find_vlc()?;
+    let mut cmd = std::process::Command::new(&vlc);
+    cmd.arg("--started-from-file");
     for p in &paths {
         cmd.arg(p);
     }
     cmd.spawn()
-        .map_err(|e| format!("Failed to start mpv: {e}"))?;
+        .map_err(|e| format!("Failed to start VLC: {e}"))?;
     Ok(())
 }

@@ -48,23 +48,23 @@ NPM := npm
 CARGO := cargo
 TAURI := npx tauri
 
-MPV_VERSION := 0.41.0
-MPV_BIN := src-tauri/binaries/mpv-$(ARCH)
+VLC_VERSION := 3.0.23
+VLC_DIR := src-tauri/binaries/vlc
 ifeq ($(UNAME_S),Darwin)
   ifeq ($(UNAME_M),arm64)
-    MPV_URL := https://github.com/mpv-player/mpv/releases/download/v$(MPV_VERSION)/mpv-v$(MPV_VERSION)-macos-15-arm.zip
+    VLC_URL := https://get.videolan.org/vlc/$(VLC_VERSION)/macosx/vlc-$(VLC_VERSION)-arm64.dmg
   else
-    MPV_URL := https://github.com/mpv-player/mpv/releases/download/v$(MPV_VERSION)/mpv-v$(MPV_VERSION)-macos-15-x86_64.zip
+    VLC_URL := https://get.videolan.org/vlc/$(VLC_VERSION)/macosx/vlc-$(VLC_VERSION)-intel64.dmg
   endif
 else ifeq ($(UNAME_S),Linux)
-  MPV_URL :=
+  VLC_URL :=
 else
-  MPV_URL := https://github.com/mpv-player/mpv/releases/download/v$(MPV_VERSION)/mpv-v$(MPV_VERSION)-x86_64-pc-windows-msvc.zip
+  VLC_URL := https://get.videolan.org/vlc/$(VLC_VERSION)/win64/vlc-$(VLC_VERSION)-win64.zip
 endif
 
 .PHONY: help setup setup-system setup-rust setup-node dev build test \
         test-rust test-frontend check lint clean reinstall info \
-        ensure-node-modules ensure-mpv
+        ensure-node-modules ensure-vlc
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -102,43 +102,32 @@ setup-rust: ## Ensure Rust toolchain is ready
 	rustup default stable
 	rustup target add $(ARCH)
 
-# --- mpv sidecar ---
+# --- VLC ---
 
-ensure-mpv:
-	@if [ ! -f "$(MPV_BIN)" ] && [ ! -f "$(MPV_BIN).exe" ]; then \
-		echo "Downloading mpv for $(ARCH)..."; \
+ensure-vlc:
+	@if [ ! -d "$(VLC_DIR)" ]; then \
+		echo "Downloading VLC $(VLC_VERSION) for $(PLATFORM)..."; \
 		mkdir -p src-tauri/binaries; \
 		if [ "$(UNAME_S)" = "Darwin" ]; then \
-			curl -L "$(MPV_URL)" -o /tmp/mpv-download.zip; \
-			rm -rf /tmp/mpv-extract; \
-			cd /tmp && unzip -o mpv-download.zip -d mpv-extract; \
-			if ls /tmp/mpv-extract/*.tar.gz 1>/dev/null 2>&1; then \
-				cd /tmp/mpv-extract && tar xzf *.tar.gz; \
-			fi; \
-			if [ -d /tmp/mpv-extract/mpv.app ]; then \
-				rm -rf "$(CURDIR)/src-tauri/binaries/mpv.app"; \
-				cp -R /tmp/mpv-extract/mpv.app "$(CURDIR)/src-tauri/binaries/mpv.app"; \
-				ln -sf mpv.app/Contents/MacOS/mpv "$(CURDIR)/$(MPV_BIN)"; \
-			else \
-				echo "ERROR: mpv.app not found in archive"; \
-				find /tmp/mpv-extract -type f | head -10; \
-				exit 1; \
-			fi; \
-			rm -rf /tmp/mpv-download.zip /tmp/mpv-extract; \
+			curl -L "$(VLC_URL)" -o /tmp/vlc-download.dmg; \
+			hdiutil attach /tmp/vlc-download.dmg -mountpoint /tmp/vlc-mount -nobrowse -quiet; \
+			cp -R /tmp/vlc-mount/VLC.app "$(CURDIR)/$(VLC_DIR)"; \
+			hdiutil detach /tmp/vlc-mount -quiet; \
+			rm -f /tmp/vlc-download.dmg; \
 		elif [ "$(PLATFORM)" = "windows" ]; then \
-			curl -L "$(MPV_URL)" -o /tmp/mpv-download.zip; \
-			rm -rf /tmp/mpv-extract; \
-			cd /tmp && unzip -o mpv-download.zip -d mpv-extract; \
-			cp /tmp/mpv-extract/mpv.exe "$(CURDIR)/$(MPV_BIN).exe"; \
-			rm -rf /tmp/mpv-download.zip /tmp/mpv-extract; \
+			curl -L "$(VLC_URL)" -o /tmp/vlc-download.zip; \
+			rm -rf /tmp/vlc-extract; \
+			cd /tmp && unzip -o vlc-download.zip -d vlc-extract; \
+			mv /tmp/vlc-extract/vlc-$(VLC_VERSION) "$(CURDIR)/$(VLC_DIR)"; \
+			rm -rf /tmp/vlc-download.zip /tmp/vlc-extract; \
 		else \
-			echo "Linux: install mpv via package manager (apt install mpv)"; \
+			echo "Linux: install vlc via package manager (apt install vlc)"; \
 		fi; \
 	fi
 
 # --- Development ---
 
-dev: ensure-node-modules ensure-mpv ## Start Tauri dev server
+dev: ensure-node-modules ensure-vlc ## Start Tauri dev server
 	$(TAURI) dev
 
 dev-frontend: ensure-node-modules ## Start frontend dev server only (no Tauri)
@@ -146,7 +135,7 @@ dev-frontend: ensure-node-modules ## Start frontend dev server only (no Tauri)
 
 # --- Build ---
 
-build: ensure-node-modules ensure-mpv ## Production build for current platform
+build: ensure-node-modules ensure-vlc ## Production build for current platform
 	$(TAURI) build --target $(ARCH)
 
 build-frontend: ensure-node-modules ## Build frontend only
