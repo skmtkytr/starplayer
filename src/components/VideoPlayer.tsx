@@ -1,33 +1,17 @@
-import { useRef, useEffect, useState, useMemo, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { MediaFile } from "../types";
 
-/**
- * Convert a local file path to an asset protocol URL.
- * Encodes each path segment individually to handle special characters
- * like @, #, ?, etc. that break the default convertFileSrc.
- */
-function fileToAssetUrl(filePath: string): string {
-  // Normalize backslashes to forward slashes
-  const normalized = filePath.replace(/\\/g, "/");
-  // Encode each path segment individually, preserving / separators
-  const segments = normalized.split("/");
-  const encoded = segments
-    .map((segment) => (segment === "" ? "" : encodeURIComponent(segment)))
-    .join("/");
-  // Ensure path starts with / (Windows drive paths like C:/ don't have leading /)
-  const path = encoded.startsWith("/") ? encoded : `/${encoded}`;
-  // Tauri v2 custom protocols:
-  //   Windows WebView2: https://<scheme>.localhost/<path>
-  //   macOS/Linux:      <scheme>://localhost/<path>
-  // Use window.__TAURI_INTERNALS__ to detect Tauri on Windows reliably
-  const w = window as unknown as Record<string, unknown>;
-  const isTauriWindows =
-    typeof w.__TAURI_INTERNALS__ !== "undefined" &&
-    navigator.userAgent.includes("Windows");
-  if (isTauriWindows) {
-    return `https://asset.localhost${path}`;
-  }
-  return `asset://localhost${path}`;
+let cachedPort: number | null = null;
+
+async function getPort(): Promise<number> {
+  if (cachedPort) return cachedPort;
+  cachedPort = await invoke<number>("get_media_server_port");
+  return cachedPort;
+}
+
+export function streamUrl(port: number, filePath: string): string {
+  return `http://127.0.0.1:${port}/stream/${encodeURIComponent(filePath)}`;
 }
 
 interface Props {
@@ -49,22 +33,27 @@ export function VideoPlayer({
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
 
-  // Stable URL - only recompute when file path changes
-  const videoSrc = useMemo(() => fileToAssetUrl(file.path), [file.path]);
-
-  // Only reload when file actually changes
-  const prevFileId = useRef(file.id);
+  // Resolve port and build URL when file changes
+  const prevFileId = useRef<string | null>(null);
   useEffect(() => {
-    if (prevFileId.current !== file.id) {
-      prevFileId.current = file.id;
-      setError(null);
-      if (videoRef.current) {
-        videoRef.current.load();
-        videoRef.current.play().catch(() => {});
-      }
+    if (prevFileId.current === file.id) return;
+    prevFileId.current = file.id;
+    setError(null);
+    setVideoSrc(null);
+    getPort().then((port) => {
+      setVideoSrc(streamUrl(port, file.path));
+    });
+  }, [file.id, file.path]);
+
+  // Play when src is ready
+  useEffect(() => {
+    if (videoSrc && videoRef.current) {
+      videoRef.current.load();
+      videoRef.current.play().catch(() => {});
     }
-  }, [file.id]);
+  }, [videoSrc]);
 
   // Stable callback refs to avoid re-binding keyboard handler
   const onCloseRef = useRef(onClose);
@@ -97,7 +86,6 @@ export function VideoPlayer({
         e.preventDefault();
         v.currentTime = Math.max(v.currentTime - 5, 0);
       } else if (e.key === " ") {
-        // Skip if video element has focus (native controls handle it)
         if (document.activeElement === videoRef.current) return;
         e.preventDefault();
         if (v) {
@@ -110,7 +98,7 @@ export function VideoPlayer({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []); // Empty deps - uses refs for callbacks
+  }, []);
 
   const handleEnded = useCallback(() => {
     onNextRef.current?.();
@@ -118,9 +106,9 @@ export function VideoPlayer({
 
   const handleError = useCallback(() => {
     setError(
-      `Cannot play: .${file.extension} | URL: ${fileToAssetUrl(file.path)}`
+      `Cannot play this file. Format may not be supported: .${file.extension}`
     );
-  }, [file.extension, file.path]);
+  }, [file.extension]);
 
   return (
     <div className="video-player">
@@ -168,7 +156,7 @@ export function VideoPlayer({
             Supported: MP4 (H.264/H.265), WebM, MOV, OGG
           </p>
         </div>
-      ) : (
+      ) : videoSrc ? (
         <video
           ref={videoRef}
           className="video-element"
@@ -178,6 +166,10 @@ export function VideoPlayer({
           onEnded={handleEnded}
           onError={handleError}
         />
+      ) : (
+        <div className="video-player-error">
+          <p>Loading...</p>
+        </div>
       )}
     </div>
   );
