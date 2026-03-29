@@ -88,9 +88,9 @@ export function VideoPlayer({
 
   const handleError = useCallback(() => {
     setError(
-      `Cannot play this file. Format may not be supported: .${file.extension}`
+      `Cannot play: .${file.extension} | URL: ${convertFileSrc(file.path)}`
     );
-  }, [file.extension]);
+  }, [file.extension, file.path]);
 
   return (
     <div className="video-player">
