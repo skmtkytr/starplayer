@@ -2,7 +2,13 @@ import { useRef, useEffect, useState } from "react";
 import type { MediaFile } from "../types";
 
 function streamUrl(filePath: string): string {
-  return `stream://localhost/${encodeURIComponent(filePath)}`;
+  const encoded = encodeURIComponent(filePath);
+  // Windows WebView2 requires https://scheme.localhost/ format
+  // macOS/Linux use scheme://localhost/ format
+  if (navigator.userAgent.includes("Windows")) {
+    return `https://stream.localhost/${encoded}`;
+  }
+  return `stream://localhost/${encoded}`;
 }
 
 interface Props {
