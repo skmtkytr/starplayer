@@ -3,12 +3,22 @@ import type { MediaFile } from "../types";
 
 function streamUrl(filePath: string): string {
   const encoded = encodeURIComponent(filePath);
-  // Windows WebView2 requires https://scheme.localhost/ format
-  // macOS/Linux use scheme://localhost/ format
-  if (navigator.userAgent.includes("Windows")) {
+  // Tauri custom protocols:
+  //   Windows WebView2: https://<scheme>.localhost/<path>
+  //   macOS/Linux:      <scheme>://localhost/<path>
+  const isWindows = navigator.platform.startsWith("Win") ||
+    navigator.userAgent.includes("Windows");
+  if (isWindows) {
     return `https://stream.localhost/${encoded}`;
   }
   return `stream://localhost/${encoded}`;
+}
+
+// Debug: log URL and test connectivity
+function debugStreamUrl(file: MediaFile): string {
+  const url = streamUrl(file.path);
+  console.log("[VideoPlayer] stream URL:", url);
+  return url;
 }
 
 interface Props {
@@ -31,7 +41,7 @@ export function VideoPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const videoSrc = streamUrl(file.path);
+  const videoSrc = debugStreamUrl(file);
 
   useEffect(() => {
     setError(null);
@@ -125,6 +135,9 @@ export function VideoPlayer({
             The format may not be supported by the built-in player.
             <br />
             Supported: MP4 (H.264/H.265), WebM, MOV, OGG
+          </p>
+          <p style={{ fontSize: "10px", color: "var(--text-secondary)", wordBreak: "break-all" }}>
+            URL: {videoSrc}
           </p>
         </div>
       ) : (
