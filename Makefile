@@ -110,8 +110,20 @@ ensure-mpv:
 		mkdir -p src-tauri/binaries; \
 		if [ "$(UNAME_S)" = "Darwin" ]; then \
 			curl -L "$(MPV_URL)" -o /tmp/mpv-download.zip; \
+			rm -rf /tmp/mpv-extract; \
 			cd /tmp && unzip -o mpv-download.zip -d mpv-extract; \
-			cp /tmp/mpv-extract/mpv.app/Contents/MacOS/mpv "$(CURDIR)/$(MPV_BIN)"; \
+			if [ -f /tmp/mpv-extract/mpv.app/Contents/MacOS/mpv ]; then \
+				cp /tmp/mpv-extract/mpv.app/Contents/MacOS/mpv "$(CURDIR)/$(MPV_BIN)"; \
+			elif ls /tmp/mpv-extract/*.tar.gz 1>/dev/null 2>&1; then \
+				cd /tmp/mpv-extract && tar xzf *.tar.gz; \
+				find /tmp/mpv-extract -name mpv -type f | head -1 | xargs -I{} cp {} "$(CURDIR)/$(MPV_BIN)"; \
+			elif [ -f /tmp/mpv-extract/mpv ]; then \
+				cp /tmp/mpv-extract/mpv "$(CURDIR)/$(MPV_BIN)"; \
+			else \
+				echo "ERROR: Could not find mpv binary in archive. Contents:"; \
+				find /tmp/mpv-extract -type f; \
+				exit 1; \
+			fi; \
 			chmod +x "$(CURDIR)/$(MPV_BIN)"; \
 			rm -rf /tmp/mpv-download.zip /tmp/mpv-extract; \
 		elif [ "$(PLATFORM)" = "windows" ]; then \
