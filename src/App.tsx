@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { listen } from "@tauri-apps/api/event";
 import type { Workspace, MediaFile, Playlist, PlaylistFilter } from "./types";
 import {
   listWorkspaces,
@@ -88,6 +89,17 @@ function App() {
 
   useEffect(() => {
     loadMediaFiles();
+  }, [loadMediaFiles]);
+
+  // File watcher events from the backend — refresh the media list so newly
+  // added/removed files in the workspace show up automatically.
+  useEffect(() => {
+    const unlisten = listen<string>("media-files-changed", () => {
+      loadMediaFiles();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, [loadMediaFiles]);
 
   // Ctrl+A / Cmd+A

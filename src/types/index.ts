@@ -34,5 +34,6 @@ export interface Playlist {
 export interface ScanResult {
   added: number;
   updated: number;
+  removed: number;
   total: number;
 }

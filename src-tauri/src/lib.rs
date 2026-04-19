@@ -2,9 +2,11 @@ mod commands;
 mod db;
 mod models;
 mod scanner;
+mod watcher;
 
 use db::Database;
 use tauri::Manager;
+use watcher::WatcherRegistry;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,7 +19,24 @@ pub fn run() {
                 .app_data_dir()
                 .expect("Failed to get app data dir");
             let db = Database::new(app_dir).expect("Failed to initialize database");
+            let registry = WatcherRegistry::new();
+
+            // Initial sync + start watcher for each existing workspace.
+            if let Ok(workspaces) = db.list_workspaces() {
+                for ws in &workspaces {
+                    if let Err(e) = scanner::scan_workspace(&db, &ws.id, &ws.path) {
+                        eprintln!("Initial scan failed for {}: {e}", ws.name);
+                    }
+                    if let Err(e) =
+                        registry.watch(ws.id.clone(), ws.path.clone(), app.handle().clone())
+                    {
+                        eprintln!("Failed to start watcher for {}: {e}", ws.name);
+                    }
+                }
+            }
+
             app.manage(db);
+            app.manage(registry);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -1,15 +1,27 @@
 use crate::db::Database;
 use crate::models::*;
 use crate::scanner;
-use tauri::State;
+use crate::watcher::WatcherRegistry;
+use tauri::{AppHandle, State};
 
 type DbState<'a> = State<'a, Database>;
+type WatcherState<'a> = State<'a, WatcherRegistry>;
 
 // === Workspace commands ===
 
 #[tauri::command]
-pub fn add_workspace(db: DbState<'_>, name: String, path: String) -> Result<Workspace, String> {
-    db.add_workspace(&name, &path).map_err(|e| e.to_string())
+pub fn add_workspace(
+    app: AppHandle,
+    db: DbState<'_>,
+    watchers: WatcherState<'_>,
+    name: String,
+    path: String,
+) -> Result<Workspace, String> {
+    let ws = db.add_workspace(&name, &path).map_err(|e| e.to_string())?;
+    if let Err(e) = watchers.watch(ws.id.clone(), ws.path.clone(), app) {
+        eprintln!("Failed to start watcher for {}: {e}", ws.name);
+    }
+    Ok(ws)
 }
 
 #[tauri::command]
@@ -18,7 +30,12 @@ pub fn list_workspaces(db: DbState<'_>) -> Result<Vec<Workspace>, String> {
 }
 
 #[tauri::command]
-pub fn remove_workspace(db: DbState<'_>, id: String) -> Result<(), String> {
+pub fn remove_workspace(
+    db: DbState<'_>,
+    watchers: WatcherState<'_>,
+    id: String,
+) -> Result<(), String> {
+    watchers.unwatch(&id);
     db.remove_workspace(&id).map_err(|e| e.to_string())
 }
 

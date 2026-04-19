@@ -1,12 +1,44 @@
 use crate::db::Database;
 use crate::models::{MediaFileInsert, ScanResult};
+use std::collections::HashSet;
 use std::path::Path;
 use walkdir::WalkDir;
 
-const VIDEO_EXTENSIONS: &[&str] = &[
+pub const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "ts", "vob", "ogv",
     "3gp", "f4v", "rm", "rmvb", "divx",
 ];
+
+pub fn is_video_file(path: &Path) -> bool {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) => VIDEO_EXTENSIONS.contains(&ext.to_lowercase().as_str()),
+        None => false,
+    }
+}
+
+pub fn build_insert(workspace_id: &str, path: &Path) -> Option<MediaFileInsert> {
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase())?;
+    if !VIDEO_EXTENSIONS.contains(&extension.as_str()) {
+        return None;
+    }
+    let filename = path.file_name().and_then(|n| n.to_str())?.to_string();
+    let full_path = path.to_string_lossy().to_string();
+    let size = path.metadata().map(|m| m.len() as i64).unwrap_or(0);
+    let (series_name, series_number) = extract_series_info(&filename);
+    Some(MediaFileInsert {
+        id: uuid::Uuid::new_v4().to_string(),
+        workspace_id: workspace_id.to_string(),
+        path: full_path,
+        filename,
+        extension,
+        size_bytes: size,
+        series_name,
+        series_number,
+    })
+}
 
 pub fn scan_workspace(
     db: &Database,
@@ -18,8 +50,8 @@ pub fn scan_workspace(
         return Err(format!("Path does not exist: {workspace_path}"));
     }
 
-    let mut added = 0usize;
     let mut total = 0usize;
+    let mut seen: HashSet<String> = HashSet::new();
 
     for entry in WalkDir::new(path)
         .follow_links(true)
@@ -29,55 +61,35 @@ pub fn scan_workspace(
         if !entry.file_type().is_file() {
             continue;
         }
-
         let file_path = entry.path();
-        let extension = match file_path.extension().and_then(|e| e.to_str()) {
-            Some(ext) => ext.to_lowercase(),
-            None => continue,
-        };
-
-        if !VIDEO_EXTENSIONS.contains(&extension.as_str()) {
+        let Some(file) = build_insert(workspace_id, file_path) else {
             continue;
-        }
-
-        let filename = file_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-
-        let full_path = file_path.to_string_lossy().to_string();
-        let size = entry.metadata().map(|m| m.len() as i64).unwrap_or(0);
-
-        let (series_name, series_number) = extract_series_info(&filename);
-
-        let file = MediaFileInsert {
-            id: uuid::Uuid::new_v4().to_string(),
-            workspace_id: workspace_id.to_string(),
-            path: full_path,
-            filename,
-            extension,
-            size_bytes: size,
-            series_name,
-            series_number,
         };
-
-        match db.upsert_media_file(&file) {
-            Ok(()) => {
-                added += 1;
-            }
-            Err(e) => {
-                eprintln!("Failed to insert media file: {e}");
-            }
+        seen.insert(file.path.clone());
+        if let Err(e) = db.upsert_media_file(&file) {
+            eprintln!("Failed to insert media file: {e}");
         }
         total += 1;
     }
 
-    let updated = total.saturating_sub(added);
+    // Remove DB entries whose paths are no longer present on disk.
+    let known = db
+        .list_workspace_media_paths(workspace_id)
+        .map_err(|e| e.to_string())?;
+    let mut removed = 0usize;
+    for p in known {
+        if !seen.contains(&p) {
+            match db.remove_media_file_by_path(&p) {
+                Ok(n) => removed += n,
+                Err(e) => eprintln!("Failed to remove stale media row: {e}"),
+            }
+        }
+    }
 
     Ok(ScanResult {
-        added,
-        updated,
+        added: total,
+        updated: 0,
+        removed,
         total,
     })
 }
@@ -225,4 +237,50 @@ mod tests {
         assert_eq!(name, None);
         assert_eq!(num, None);
     }
+
+    #[test]
+    fn is_video_file_matches_known_extensions() {
+        assert!(is_video_file(std::path::Path::new("/tmp/a.mp4")));
+        assert!(is_video_file(std::path::Path::new("/tmp/a.MKV")));
+        assert!(!is_video_file(std::path::Path::new("/tmp/a.txt")));
+        assert!(!is_video_file(std::path::Path::new("/tmp/no_ext")));
+    }
+
+    #[test]
+    fn build_insert_returns_none_for_non_video() {
+        let p = std::path::Path::new("/tmp/a.txt");
+        assert!(build_insert("ws", p).is_none());
+    }
+
+    #[test]
+    fn scan_workspace_prunes_missing_files() {
+        use crate::db::Database;
+
+        let tmp = std::env::temp_dir().join(format!("starplayer-scan-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let db = Database::new(tmp.join("_db")).unwrap();
+        let ws = db.add_workspace("t", tmp.to_str().unwrap()).unwrap();
+
+        let kept = tmp.join("kept.mp4");
+        let gone = tmp.join("gone.mp4");
+        std::fs::write(&kept, b"x").unwrap();
+        std::fs::write(&gone, b"x").unwrap();
+
+        let r1 = scan_workspace(&db, &ws.id, tmp.to_str().unwrap()).unwrap();
+        assert_eq!(r1.total, 2);
+        assert_eq!(r1.removed, 0);
+
+        std::fs::remove_file(&gone).unwrap();
+
+        let r2 = scan_workspace(&db, &ws.id, tmp.to_str().unwrap()).unwrap();
+        assert_eq!(r2.total, 1);
+        assert_eq!(r2.removed, 1);
+
+        let paths = db.list_workspace_media_paths(&ws.id).unwrap();
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].ends_with("kept.mp4"));
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
 }

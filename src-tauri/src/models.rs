@@ -57,5 +57,6 @@ pub struct PlaylistFilter {
 pub struct ScanResult {
     pub added: usize,
     pub updated: usize,
+    pub removed: usize,
     pub total: usize,
 }
