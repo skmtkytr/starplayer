@@ -18,6 +18,7 @@ import {
 } from "./hooks/useApi";
 import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { PlaylistDialog } from "./components/PlaylistDialog";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 
 type View =
   | { type: "library"; workspaceId?: string }
@@ -47,6 +48,9 @@ function App() {
   const [showPlaylistDialog, setShowPlaylistDialog] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | undefined>();
   const [statusMessage, setStatusMessage] = useState("");
+  const [confirm, setConfirm] = useState<
+    { message: string; onConfirm: () => void } | undefined
+  >();
 
   const loadWorkspaces = useCallback(async () => {
     try {
@@ -296,9 +300,10 @@ function App() {
               }
               onContextMenu={(e) => {
                 e.preventDefault();
-                if (confirm(`Remove workspace "${ws.name}"?`)) {
-                  handleRemoveWorkspace(ws.id);
-                }
+                setConfirm({
+                  message: `Remove workspace "${ws.name}"?`,
+                  onConfirm: () => handleRemoveWorkspace(ws.id),
+                });
               }}
               onDoubleClick={() => handleRescan(ws)}
             >
@@ -324,9 +329,10 @@ function App() {
               }
               onContextMenu={(e) => {
                 e.preventDefault();
-                if (confirm(`Delete playlist "${pl.name}"?`)) {
-                  handleDeletePlaylist(pl.id);
-                }
+                setConfirm({
+                  message: `Delete playlist "${pl.name}"?`,
+                  onConfirm: () => handleDeletePlaylist(pl.id),
+                });
               }}
               onDoubleClick={() => {
                 setEditingPlaylist(pl);
@@ -533,6 +539,14 @@ function App() {
             setShowPlaylistDialog(false);
             setEditingPlaylist(undefined);
           }}
+        />
+      )}
+      {confirm && (
+        <ConfirmDialog
+          message={confirm.message}
+          confirmLabel="Remove"
+          onConfirm={confirm.onConfirm}
+          onClose={() => setConfirm(undefined)}
         />
       )}
     </div>
