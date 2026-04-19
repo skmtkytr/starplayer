@@ -136,7 +136,7 @@ dev-frontend: ensure-node-modules ## Start frontend dev server only (no Tauri)
 # --- Build ---
 
 build: ensure-node-modules ensure-vlc ## Production build for current platform
-	$(TAURI) build --target $(ARCH)
+	$(TAURI) build --target $(ARCH) --no-bundle
 
 build-frontend: ensure-node-modules ## Build frontend only
 	$(NPM) run build
