@@ -64,7 +64,7 @@ endif
 
 .PHONY: help setup setup-system setup-rust setup-node dev build test \
         test-rust test-frontend check lint clean reinstall info \
-        ensure-node-modules ensure-vlc
+        ensure-node-modules ensure-vlc install uninstall
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -180,3 +180,43 @@ reinstall: ## Force reinstall node_modules for current arch
 	$(NPM) install
 	@echo "$(ARCH_SHORT)" > $(NODE_STAMP)
 	@echo "Reinstalled for $(PLATFORM) ($(ARCH_SHORT))"
+
+# --- Install (Linux only) ---
+
+INSTALL_PREFIX  := $(HOME)/.local
+INSTALL_BIN     := $(INSTALL_PREFIX)/bin/starplayer
+INSTALL_ICON    := $(INSTALL_PREFIX)/share/icons/starplayer.png
+INSTALL_DESKTOP := $(INSTALL_PREFIX)/share/applications/starplayer.desktop
+BUILT_BIN       := src-tauri/target/$(ARCH)/release/starplayer
+
+install: build ## Install binary + .desktop entry into ~/.local (Linux)
+ifneq ($(PLATFORM),linux)
+	@echo "make install is only supported on Linux."; exit 1
+endif
+	install -Dm755 $(BUILT_BIN) $(INSTALL_BIN)
+	install -Dm644 src-tauri/icons/128x128.png $(INSTALL_ICON)
+	install -d $(dir $(INSTALL_DESKTOP))
+	@printf '%s\n' \
+		'[Desktop Entry]' \
+		'Type=Application' \
+		'Name=Star Player' \
+		'GenericName=Video Library Player' \
+		'Comment=Local video library player with playlists' \
+		'Exec=$(INSTALL_BIN) %U' \
+		'Icon=$(INSTALL_ICON)' \
+		'Terminal=false' \
+		'Categories=AudioVideo;Player;' \
+		'StartupWMClass=starplayer' \
+		> $(INSTALL_DESKTOP)
+	@command -v update-desktop-database >/dev/null && \
+		update-desktop-database $(dir $(INSTALL_DESKTOP)) >/dev/null 2>&1 || true
+	@echo "Installed:"
+	@echo "  $(INSTALL_BIN)"
+	@echo "  $(INSTALL_ICON)"
+	@echo "  $(INSTALL_DESKTOP)"
+
+uninstall: ## Remove installed binary + .desktop entry
+	rm -f $(INSTALL_BIN) $(INSTALL_ICON) $(INSTALL_DESKTOP)
+	@command -v update-desktop-database >/dev/null && \
+		update-desktop-database $(dir $(INSTALL_DESKTOP)) >/dev/null 2>&1 || true
+	@echo "Uninstalled."
