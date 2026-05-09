@@ -218,13 +218,13 @@ impl Database {
 
         for f in &filters {
             if f.field == "recent_days" {
-                if let Ok(days) = f.value.trim().parse::<i64>() {
-                    if days > 0 {
-                        sql.push_str(
-                            " AND mtime IS NOT NULL AND mtime > (CAST(strftime('%s','now') AS INTEGER) - ?)",
-                        );
-                        param_values.push(Box::new(days * 86400));
-                    }
+                if let Ok(days) = f.value.trim().parse::<i64>()
+                    && days > 0
+                {
+                    sql.push_str(
+                        " AND mtime IS NOT NULL AND mtime > (CAST(strftime('%s','now') AS INTEGER) - ?)",
+                    );
+                    param_values.push(Box::new(days * 86400));
                 }
                 continue;
             }
