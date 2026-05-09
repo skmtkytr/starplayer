@@ -19,7 +19,13 @@ export interface MediaFile {
 }
 
 export interface PlaylistFilter {
-  field: "filename" | "extension" | "path" | "series_name" | "workspace_id";
+  field:
+    | "filename"
+    | "extension"
+    | "path"
+    | "series_name"
+    | "workspace_id"
+    | "recent_days";
   operator: "contains" | "not_contains" | "equals" | "starts_with" | "ends_with";
   value: string;
 }

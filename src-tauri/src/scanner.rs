@@ -26,7 +26,13 @@ pub fn build_insert(workspace_id: &str, path: &Path) -> Option<MediaFileInsert> 
     }
     let filename = path.file_name().and_then(|n| n.to_str())?.to_string();
     let full_path = path.to_string_lossy().to_string();
-    let size = path.metadata().map(|m| m.len() as i64).unwrap_or(0);
+    let metadata = path.metadata().ok();
+    let size = metadata.as_ref().map(|m| m.len() as i64).unwrap_or(0);
+    let mtime = metadata
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64);
     let (series_name, series_number) = extract_series_info(&filename);
     Some(MediaFileInsert {
         id: uuid::Uuid::new_v4().to_string(),
@@ -37,6 +43,7 @@ pub fn build_insert(workspace_id: &str, path: &Path) -> Option<MediaFileInsert> 
         size_bytes: size,
         series_name,
         series_number,
+        mtime,
     })
 }
 
@@ -250,6 +257,26 @@ mod tests {
     fn build_insert_returns_none_for_non_video() {
         let p = std::path::Path::new("/tmp/a.txt");
         assert!(build_insert("ws", p).is_none());
+    }
+
+    #[test]
+    fn build_insert_populates_mtime_from_filesystem() {
+        let tmp = std::env::temp_dir().join(format!("sp-mtime-{}.mp4", uuid::Uuid::new_v4()));
+        std::fs::write(&tmp, b"x").unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let insert = build_insert("ws", &tmp).expect("build_insert");
+        let mtime = insert.mtime.expect("mtime should be present for existing file");
+        // Allow ±60s skew between syscall and our `now`.
+        assert!(
+            (mtime - now).abs() < 60,
+            "mtime {mtime} should be near now {now}"
+        );
+
+        std::fs::remove_file(&tmp).ok();
     }
 
     #[test]

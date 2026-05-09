@@ -7,6 +7,7 @@ const FIELDS: { value: PlaylistFilter["field"]; label: string }[] = [
   { value: "path", label: "Path" },
   { value: "series_name", label: "Series name" },
   { value: "workspace_id", label: "Workspace" },
+  { value: "recent_days", label: "Recent (days)" },
 ];
 
 const OPERATORS: { value: PlaylistFilter["operator"]; label: string }[] = [
@@ -106,7 +107,7 @@ export function PlaylistDialog({
                 onChange={(e) => {
                   const field = e.target.value as PlaylistFilter["field"];
                   const patch: Partial<PlaylistFilter> = { field };
-                  if (field === "workspace_id") {
+                  if (field === "workspace_id" || field === "recent_days") {
                     patch.operator = "equals";
                     patch.value = "";
                   }
@@ -121,6 +122,8 @@ export function PlaylistDialog({
               </select>
               {f.field === "workspace_id" ? (
                 <span style={{ fontSize: 13, color: "var(--text-secondary)", padding: "0 4px" }}>is</span>
+              ) : f.field === "recent_days" ? (
+                <span style={{ fontSize: 13, color: "var(--text-secondary)", padding: "0 4px" }}>within last</span>
               ) : (
                 <select
                   className="filter-select"
@@ -152,6 +155,28 @@ export function PlaylistDialog({
                     </option>
                   ))}
                 </select>
+              ) : f.field === "recent_days" ? (
+                <>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    style={{
+                      width: 90,
+                      padding: "8px 12px",
+                      background: "var(--bg-primary)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 6,
+                      color: "var(--text-primary)",
+                      fontSize: 13,
+                      outline: "none",
+                    }}
+                    value={f.value}
+                    onChange={(e) => updateFilter(i, { value: e.target.value })}
+                    placeholder="7"
+                  />
+                  <span style={{ fontSize: 13, color: "var(--text-secondary)", flex: 1 }}>days</span>
+                </>
               ) : (
                 <input
                   style={{

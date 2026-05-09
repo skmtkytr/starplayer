@@ -32,6 +32,8 @@ pub struct MediaFileInsert {
     pub size_bytes: i64,
     pub series_name: Option<String>,
     pub series_number: Option<i32>,
+    /// Filesystem mtime as unix epoch seconds.
+    pub mtime: Option<i64>,
 }
 
 /// A playlist is a named set of filter conditions.

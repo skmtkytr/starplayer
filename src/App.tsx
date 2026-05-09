@@ -33,6 +33,9 @@ function formatFilter(
     const ws = workspaces.find((w) => w.id === f.value);
     return verbose ? `workspace: ${ws?.name ?? "?"}` : ws?.name ?? "workspace";
   }
+  if (f.field === "recent_days") {
+    return verbose ? `within last ${f.value} days` : `≤${f.value}d`;
+  }
   return verbose ? `${f.field} ${f.operator} "${f.value}"` : f.value;
 }
 

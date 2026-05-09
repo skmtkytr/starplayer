@@ -42,6 +42,7 @@ impl Database {
                 height INTEGER,
                 series_name TEXT,
                 series_number INTEGER,
+                mtime INTEGER,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
@@ -69,6 +70,9 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_media_series ON media_files(series_name, series_number);
             ",
         )?;
+        // Migration: add mtime column to existing DBs that pre-date the schema above.
+        // Errors with "duplicate column name" when the column already exists; ignore.
+        let _ = conn.execute("ALTER TABLE media_files ADD COLUMN mtime INTEGER", []);
         Ok(())
     }
 
@@ -147,17 +151,19 @@ impl Database {
     pub fn upsert_media_file(&self, file: &MediaFileInsert) -> Result<()> {
         let conn = self.conn();
         conn.execute(
-            "INSERT INTO media_files (id, workspace_id, path, filename, extension, size_bytes, series_name, series_number)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO media_files (id, workspace_id, path, filename, extension, size_bytes, series_name, series_number, mtime)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(path) DO UPDATE SET
                 filename = excluded.filename,
                 size_bytes = excluded.size_bytes,
                 series_name = excluded.series_name,
                 series_number = excluded.series_number,
+                mtime = excluded.mtime,
                 updated_at = datetime('now')",
             params![
                 file.id, file.workspace_id, file.path, file.filename,
                 file.extension, file.size_bytes, file.series_name, file.series_number,
+                file.mtime,
             ],
         )?;
         Ok(())
@@ -211,6 +217,18 @@ impl Database {
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         for f in &filters {
+            if f.field == "recent_days" {
+                if let Ok(days) = f.value.trim().parse::<i64>() {
+                    if days > 0 {
+                        sql.push_str(
+                            " AND mtime IS NOT NULL AND mtime > (CAST(strftime('%s','now') AS INTEGER) - ?)",
+                        );
+                        param_values.push(Box::new(days * 86400));
+                    }
+                }
+                continue;
+            }
+
             let col = match f.field.as_str() {
                 "filename" => "filename",
                 "extension" => "extension",
@@ -431,7 +449,15 @@ mod tests {
             size_bytes: 123,
             series_name: None,
             series_number: None,
+            mtime: Some(now_unix()),
         }
+    }
+
+    fn now_unix() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
     }
 
     #[test]
@@ -455,6 +481,57 @@ mod tests {
         let db = new_test_db();
         let affected = db.remove_media_file_by_path("/nonexistent").unwrap();
         assert_eq!(affected, 0);
+    }
+
+    #[test]
+    fn query_playlist_files_filters_by_recent_days_using_mtime() {
+        let db = new_test_db();
+        let ws = db.add_workspace("w", "/tmp/w").unwrap();
+        let now = now_unix();
+        let mut new_file = sample_insert(&ws.id, "/tmp/w/new.mp4");
+        new_file.mtime = Some(now - 86400); // 1 day ago
+        let mut old_file = sample_insert(&ws.id, "/tmp/w/old.mp4");
+        old_file.mtime = Some(now - 30 * 86400); // 30 days ago
+        db.upsert_media_file(&new_file).unwrap();
+        db.upsert_media_file(&old_file).unwrap();
+
+        let playlist = db
+            .create_playlist(
+                "recent",
+                &[PlaylistFilter {
+                    field: "recent_days".to_string(),
+                    operator: "equals".to_string(),
+                    value: "7".to_string(),
+                }],
+            )
+            .unwrap();
+
+        let files = db.query_playlist_files(&playlist.id).unwrap();
+        let paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
+        assert_eq!(paths, vec!["/tmp/w/new.mp4".to_string()]);
+    }
+
+    #[test]
+    fn query_playlist_files_recent_days_excludes_null_mtime() {
+        let db = new_test_db();
+        let ws = db.add_workspace("w", "/tmp/w").unwrap();
+        let mut no_mtime = sample_insert(&ws.id, "/tmp/w/legacy.mp4");
+        no_mtime.mtime = None;
+        db.upsert_media_file(&no_mtime).unwrap();
+
+        let playlist = db
+            .create_playlist(
+                "recent",
+                &[PlaylistFilter {
+                    field: "recent_days".to_string(),
+                    operator: "equals".to_string(),
+                    value: "7".to_string(),
+                }],
+            )
+            .unwrap();
+
+        let files = db.query_playlist_files(&playlist.id).unwrap();
+        assert!(files.is_empty(), "rows with NULL mtime must not match");
     }
 
     #[test]
